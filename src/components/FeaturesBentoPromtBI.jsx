@@ -1,6 +1,6 @@
 import React from 'react';
 
-const FeaturesBentoPromBi = () => {
+const FeaturesBentoPromtBI = () => {
   return (
     <section className="bg-[#050505] text-white py-24 relative overflow-hidden">
       <div className="container mx-auto px-6 relative z-10">
@@ -21,7 +21,7 @@ const FeaturesBentoPromBi = () => {
             <div className="relative z-10 mb-8">
               <h3 className="text-2xl font-bold text-white mb-3">Magia Visual Dinámica</h3>
               <p className="text-gray-400 text-base leading-relaxed max-w-md">
-                Tú pides, PromBi dibuja. La IA genera gráficos de barras, matrices y KPIs en tiempo real. Filtra fechas dinámicamente ("este trimestre") y acomoda el layout en pantalla en menos de 5 segundos. Interactividad total sin clics.
+                Tú pides, PromtBI dibuja. La IA genera gráficos de barras, matrices y KPIs en tiempo real. Filtra fechas dinámicamente ("este trimestre") y acomoda el layout en pantalla en menos de 5 segundos. Interactividad total sin clics.
               </p>
             </div>
             <div className="relative w-full h-48 bg-white/5 border border-white/10 rounded-xl overflow-hidden group-hover:-translate-y-2 transition-transform duration-500 p-4 flex items-end gap-2">
@@ -73,4 +73,4 @@ const FeaturesBentoPromBi = () => {
   );
 };
 
-export default FeaturesBentoPromBi;
+export default FeaturesBentoPromtBI;

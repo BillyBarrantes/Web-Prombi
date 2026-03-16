@@ -1,6 +1,6 @@
 import React from 'react';
 
-const HowItWorksPromBi = () => {
+const HowItWorksPromtBI = () => {
   return (
     <section className="bg-[#050505] text-white py-24 relative overflow-hidden">
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-blue-600/5 rounded-full blur-[120px] pointer-events-none"></div>
@@ -61,4 +61,4 @@ const HowItWorksPromBi = () => {
   );
 };
 
-export default HowItWorksPromBi;
+export default HowItWorksPromtBI;

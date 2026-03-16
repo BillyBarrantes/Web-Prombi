@@ -1,6 +1,6 @@
 import React from 'react';
 
-const FAQPromBi = () => {
+const FAQPromtBI = () => {
   return (
     <section className="bg-[#050505] text-white py-24 relative overflow-hidden border-t border-white/5">
       <div className="container mx-auto px-6 relative z-10">
@@ -19,7 +19,7 @@ const FAQPromBi = () => {
           <div className="bg-[#0f0f0f] border border-white/10 rounded-2xl p-8 hover:border-green-500/30 transition-colors shadow-lg">
             <h3 className="text-lg font-bold text-white mb-3">¿Necesito licencias Premium de Microsoft?</h3>
             <p className="text-gray-400 text-sm leading-relaxed">
-              <strong className="text-gray-200">Definitivamente no.</strong> Ese es nuestro mayor diferenciador. PromBi logra un nivel de interactividad avanzada utilizando tu Power BI Embedded estándar. Cortamos de raíz la necesidad de escalar a licencias Premium o depender de capacidades XMLA de alto costo.
+              <strong className="text-gray-200">Definitivamente no.</strong> Ese es nuestro mayor diferenciador. PromtBI logra un nivel de interactividad avanzada utilizando tu Power BI Embedded estándar. Cortamos de raíz la necesidad de escalar a licencias Premium o depender de capacidades XMLA de alto costo.
             </p>
           </div>
 
@@ -27,7 +27,7 @@ const FAQPromBi = () => {
           <div className="bg-[#0f0f0f] border border-white/10 rounded-2xl p-8 hover:border-amber-500/30 transition-colors shadow-lg">
             <h3 className="text-lg font-bold text-white mb-3">¿Mi equipo necesita saber programar en DAX?</h3>
             <p className="text-gray-400 text-sm leading-relaxed">
-              <strong className="text-gray-200">Cero.</strong> Democratizamos el dato. El usuario solo escribe en lenguaje natural. Si la petición requiere una medida que tu modelo actual no tiene, PromBi actúa como tu tutor: genera el código DAX preciso y te guía paso a paso sobre cómo insertarlo.
+              <strong className="text-gray-200">Cero.</strong> Democratizamos el dato. El usuario solo escribe en lenguaje natural. Si la petición requiere una medida que tu modelo actual no tiene, PromtBI actúa como tu tutor: genera el código DAX preciso y te guía paso a paso sobre cómo insertarlo.
             </p>
           </div>
 
@@ -45,4 +45,4 @@ const FAQPromBi = () => {
   );
 };
 
-export default FAQPromBi;
+export default FAQPromtBI;

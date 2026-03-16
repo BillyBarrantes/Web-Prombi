@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-const PricingPromBi = () => {
+const PricingPromtBI = () => {
   const [checkoutPlan, setCheckoutPlan] = useState(null);
   const [showCalendly, setShowCalendly] = useState(false);
   const [cardNumber, setCardNumber] = useState('');
@@ -73,7 +73,7 @@ const PricingPromBi = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto items-center">
           <div className="bg-[#0f0f0f] border border-white/10 rounded-2xl p-8 hover:bg-white/[0.02] transition-colors">
             <h3 className="text-xl font-semibold text-gray-300 mb-2">Plan Piloto</h3>
-            <p className="text-gray-500 text-sm mb-6">Para validar la magia de PromBi.</p>
+            <p className="text-gray-500 text-sm mb-6">Para validar la magia de PromtBI.</p>
             <div className="mb-8">
               <span className="text-4xl font-bold">S/ 0</span>
             </div>
@@ -110,7 +110,7 @@ const PricingPromBi = () => {
             <button 
               onClick={() => setCheckoutPlan('pro')}
               className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-500 hover:shadow-[0_0_20px_rgba(59,130,246,0.4)] transition-all">
-              Probar PromBi en mi empresa
+              Probar PromtBI en mi empresa
             </button>
           </div>
 
@@ -305,4 +305,4 @@ const PricingPromBi = () => {
   );
 };
 
-export default PricingPromBi;
+export default PricingPromtBI;
