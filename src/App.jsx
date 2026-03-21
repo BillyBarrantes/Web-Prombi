@@ -9,6 +9,8 @@ import FAQPromtBI from './components/FAQPromtBI'
 import FooterPromtBI from './components/FooterPromtBI'
 import AuthPromtBI from './components/AuthPromtBI'
 import DashboardPromtBI from './components/DashboardPromtBI'
+import TermsPage from './components/TermsPage'
+import PrivacyPage from './components/PrivacyPage'
 
 const LandingPageComponents = () => (
   <main className="min-h-screen bg-[#050505] font-sans selection:bg-blue-500/30">
@@ -58,6 +60,10 @@ export default function App() {
             session ? <Navigate to="/dashboard" replace /> : <AuthPromtBI />
           } 
         />
+
+        {/* Legal Standalone Routes (For external validations like Azure) */}
+        <Route path="/terminos" element={<TermsPage />} />
+        <Route path="/politicas" element={<PrivacyPage />} />
         
         {/* Ruta Protegida Existente */}
         <Route 

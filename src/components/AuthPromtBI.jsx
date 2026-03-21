@@ -14,6 +14,7 @@ const AuthPromtBI = () => {
     await supabase.auth.signInWithOAuth({ 
       provider: 'azure', 
       options: { 
+        scopes: 'offline_access https://analysis.windows.net/powerbi/api/Report.Read.All https://analysis.windows.net/powerbi/api/Dataset.Read.All https://analysis.windows.net/powerbi/api/Workspace.Read.All',
         redirectTo: window.location.origin + '/dashboard' 
       } 
     });
