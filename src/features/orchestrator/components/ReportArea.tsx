@@ -35,85 +35,83 @@ export default function ReportArea({ lastAction, actions, lastResult, isSidebarO
     const [embedConfig, setEmbedConfig] = useState<any | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isSynced, setIsSynced] = useState(false);
 
     const activeFilters = actions.filter((a) => a.operation === "FILTER");
     const visuals = actions.filter(
         (a) => a.operation === "CREATE" || a.operation === "CREATE_VISUAL"
     );
 
-    // Fetch Embed Config on Mount
-    useEffect(() => {
+    // Handle Manual Sync
+    const handleSync = async () => {
         if (!isLiveMode) return;
 
-        const fetchEmbedConfig = async () => {
-            try {
-                setLoading(true);
-                // Hardcoded IDs for now, ideally passed from props or context
-                const reportId = "94e97143-fcba-4d04-b871-9e4e3b0c65ed"; // Internal ID
-                const tenantId = "9d36ff08-691e-4f7d-b1bf-049abf374860"; // Internal ID
+        try {
+            setLoading(true);
+            setError(null);
+            // Hardcoded IDs for now, ideally passed from props or context
+            const reportId = "94e97143-fcba-4d04-b871-9e4e3b0c65ed"; // Internal ID
+            const tenantId = "9d36ff08-691e-4f7d-b1bf-049abf374860"; // Internal ID
 
-                // Fetch Embed Config 
-                // Uses the explicit VITE_API_URL and Supabase Auth Injection
-                const { data: { session } } = await supabase.auth.getSession();
-                const headers: Record<string, string> = { "Content-Type": "application/json" };
-                
-                if (session?.access_token) {
-                    headers["Authorization"] = `Bearer ${session.access_token}`;
-                }
-
-                const res = await fetch(`${import.meta.env.VITE_API_URL}/embed-config?report_id=${reportId}&tenant_id=${tenantId}`, {
-                    method: "POST",
-                    headers: headers
-                });
-
-                if (!res.ok) {
-                    const errBody = await res.text();
-                    throw new Error(`Embed token error (${res.status}): ${errBody}`);
-                }
-
-                const data = await res.json();
-
-                setEmbedConfig({
-                    type: "report",
-                    id: data.reportId,
-                    embedUrl: data.embedUrl,
-                    accessToken: data.accessToken,
-                    tokenType: PBI_TOKEN_TYPE_EMBED,
-                    permissions: PBI_PERMISSIONS_ALL,
-                    viewMode: PBI_VIEW_MODE_EDIT,
-                    settings: {
-                        panes: {
-                            filters: {
-                                visible: false
-                            },
-                            pageNavigation: {
-                                visible: false
-                            }
-                        },
-                        background: PBI_BACKGROUND_TRANSPARENT,
-                        // Layout: FitToWidth permite scroll vertical para muchos visuals
-                        layoutType: 0, // LayoutType.Master
-                        customLayout: {
-                            displayOption: 1, // DisplayOption.FitToWidth
-                            pageSize: {
-                                type: 4, // PageSizeType.Custom
-                                width: 1280,
-                                height: 2000, // Espacio amplio para ~6 filas de visuals
-                            },
-                        },
-                    }
-                });
-            } catch (err: any) {
-                console.error("Error fetching embed config:", err);
-                setError(err.message);
-                setIsLiveMode(false); // Fallback to mock on error
-            } finally {
-                setLoading(false);
+            // Fetch Embed Config 
+            // Uses the explicit VITE_API_URL and Supabase Auth Injection
+            const { data: { session } } = await supabase.auth.getSession();
+            const headers: Record<string, string> = { "Content-Type": "application/json" };
+            
+            if (session?.access_token) {
+                headers["Authorization"] = `Bearer ${session.access_token}`;
             }
-        };
 
-        fetchEmbedConfig();
-    }, [isLiveMode]);
+            const res = await fetch(`${(import.meta as any).env.VITE_API_URL}/api/v1/embed-config?report_id=${reportId}&tenant_id=${tenantId}`, {
+                method: "POST",
+                headers: headers
+            });
+
+            if (!res.ok) {
+                const errBody = await res.text();
+                throw new Error(`Embed token error (${res.status}): ${errBody}`);
+            }
+
+            const data = await res.json();
+
+            setEmbedConfig({
+                type: "report",
+                id: data.reportId,
+                embedUrl: data.embedUrl,
+                accessToken: data.accessToken,
+                tokenType: PBI_TOKEN_TYPE_EMBED,
+                permissions: PBI_PERMISSIONS_ALL,
+                viewMode: PBI_VIEW_MODE_EDIT,
+                settings: {
+                    panes: {
+                        filters: {
+                            visible: false
+                        },
+                        pageNavigation: {
+                            visible: false
+                        }
+                    },
+                    background: PBI_BACKGROUND_TRANSPARENT,
+                    // Layout: FitToWidth permite scroll vertical para muchos visuals
+                    layoutType: 0, // LayoutType.Master
+                    customLayout: {
+                        displayOption: 1, // DisplayOption.FitToWidth
+                        pageSize: {
+                            type: 4, // PageSizeType.Custom
+                            width: 1280,
+                            height: 2000, // Espacio amplio para ~6 filas de visuals
+                        },
+                    },
+                }
+            });
+            setIsSynced(true);
+        } catch (err: any) {
+            console.error("Error fetching embed config:", err);
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     return (
         <div className="flex flex-col h-full">
@@ -173,19 +171,12 @@ export default function ReportArea({ lastAction, actions, lastResult, isSidebarO
             <div className="flex-1 overflow-hidden relative bg-gradient-mesh p-4">
 
                 {/* LIVE MODE: Power BI Embed */}
-                {isLiveMode && embedConfig ? (
+                {isLiveMode && isSynced && embedConfig ? (
                     <div className="w-full h-full rounded-2xl shadow-lg border border-white/10 overflow-hidden bg-white/5">
                         <PowerBIEmbed embedConfig={embedConfig} cssClassName="w-full h-full" />
                     </div>
-                ) : isLiveMode && loading ? (
-                    <div className="w-full h-full flex items-center justify-center">
-                        <div className="flex flex-col items-center gap-3">
-                            <div className="w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin" />
-                            <span className="text-sm text-[var(--color-text-muted)]">Conectando con Power BI Service...</span>
-                        </div>
-                    </div>
                 ) : (
-                    /* MOCK MODE: Visual Grid (Fallback) */
+                    /* MOCK MODE or NOT SYNCED YET: Visual Grid (Fallback/Empty State) */
                     <div className="h-full overflow-y-auto p-6">
                         {/* ... Existing Mock Content ... */}
                         {actions.length === 0 && !lastAction ? (
@@ -208,12 +199,31 @@ export default function ReportArea({ lastAction, actions, lastResult, isSidebarO
                                     </svg>
                                 </div>
                                 <h2 className="text-xl font-bold text-[var(--color-text-primary)] mb-2">
-                                    Tu Lienzo de BI
+                                    {isLiveMode && !isSynced ? "Conecta tu espacio de trabajo" : "Tu Lienzo de BI"}
                                 </h2>
                                 <p className="text-sm text-[var(--color-text-secondary)] max-w-md mb-6">
-                                    Usa el chat para interactuar con tu reporte. Las visualizaciones y
-                                    acciones generadas por la IA aparecerán aquí.
+                                    {isLiveMode && !isSynced 
+                                        ? "Sincroniza este entorno con tu reporte corporativo de Power BI para interactuar en lenguaje natural." 
+                                        : "Usa el chat para interactuar con tu reporte. Las visualizaciones y acciones generadas por la IA aparecerán aquí."}
                                 </p>
+
+                                {/* Botón de Sincronización Manual */}
+                                {isLiveMode && !isSynced && (
+                                    <div className="flex flex-col items-center">
+                                        <button 
+                                            onClick={handleSync}
+                                            disabled={loading}
+                                            className="mb-6 px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] flex items-center gap-2"
+                                        >
+                                            {loading ? (
+                                                <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Cargando...</>
+                                            ) : (
+                                                <>⚡ Sincronizar con Power BI</>
+                                            )}
+                                        </button>
+                                        {error && <p className="text-xs text-red-400 max-w-xs">{error}</p>}
+                                    </div>
+                                )}
                                 <div className="grid grid-cols-2 gap-3 max-w-sm">
                                     {[
                                         { icon: "📊", text: "Crea un gráfico de ventas" },

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import ReportArea from '../features/orchestrator/components/ReportArea';
 import ChatSidebar from '../features/orchestrator/components/ChatSidebar';
+import { executeAction } from '../features/orchestrator/lib/actionHandler';
 
 const DashboardPromtBI = () => {
   const navigate = useNavigate();
@@ -22,11 +23,15 @@ const DashboardPromtBI = () => {
     }
   };
 
-  const handleActionGenerated = (response) => {
-    // Stub for future integration
+  const handleActionGenerated = async (response) => {
     if (response.action) {
       setLastAction(response.action);
       setActions(prev => [...prev, response.action]);
+      
+      // Execute directly on the Power BI SDK iframe
+      const result = await executeAction(response);
+      setLastResult(result);
+      return result;
     }
   };
 
@@ -103,7 +108,7 @@ const DashboardPromtBI = () => {
 
         {/* Dynamic Chat Sidebar (Strict width governed by Dashboard layout) */}
         <div className="w-full md:w-96 lg:w-[400px] flex-shrink-0 flex flex-col h-full bg-[#050505]">
-          <ChatSidebar reportId="demo" tenantId="demo" onActionGenerated={handleActionGenerated} />
+          <ChatSidebar reportId="94e97143-fcba-4d04-b871-9e4e3b0c65ed" tenantId="9d36ff08-691e-4f7d-b1bf-049abf374860" onActionGenerated={handleActionGenerated} />
         </div>
       </div>
     </div>

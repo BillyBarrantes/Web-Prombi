@@ -8,6 +8,75 @@
   }
 }
 
+:root {
+  --color-bg-primary: #050505;
+  --color-bg-secondary: #0a0a0a;
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #9ca3af;
+  --color-text-muted: #6b7280;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+}
+
+/* Glassmorphism System */
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px border-solid var(--color-border);
+}
+
+.glass-hover:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-in forwards;
+}
+
+/* Glow effects */
+.glow-accent {
+  box-shadow: 0 0 15px rgba(37, 99, 235, 0.3);
+}
+
+.glow-green {
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+}
+
+/* Gradient Mesh */
+.bg-gradient-mesh {
+  background-image: radial-gradient(at 40% 20%, hsla(228,100%,74%,0.05) 0px, transparent 50%),
+                    radial-gradient(at 80% 0%, hsla(189,100%,56%,0.05) 0px, transparent 50%),
+                    radial-gradient(at 0% 50%, hsla(355,100%,93%,0.05) 0px, transparent 50%);
+}
+
 /* Global Dark Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
