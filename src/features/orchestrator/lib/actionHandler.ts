@@ -347,7 +347,7 @@ function parseTableColumnRef(fieldRef: string): { table: string; column: string 
 
 function isLikelyMeasureRole(logicalRole: string): boolean {
     const role = logicalRole.toLowerCase();
-    return role === "y" || role === "values" || role === "value" || role === "measure";
+    return role === "y" || role === "values" || role === "value" || role === "measure" || role === "fields";
 }
 
 function isLikelyCategoryRole(logicalRole: string): boolean {
@@ -582,14 +582,14 @@ async function addFieldWithRoleFallback(
     // Time Intelligence se resuelve con filtros sobre Periodo_Mes.
     // → TODO daxExpression complejo se IGNORA en el frontend.
     // → Solo se permite conversión de DAX simple (SUM/AVG) a column binding.
-    const SIMPLE_AGG_RE = /^(SUM|AVERAGE|AVG|COUNT|COUNTA|MIN|MAX)\s*\(\s*'([^']+)'\[([^\]]+)\]\s*\)$/i;
+    const SIMPLE_AGG_RE = /^(SUM|AVERAGE|AVG|COUNT|COUNTA|MIN|MAX)\s*\(\s*'?([^'\[]+?)'?\s*\[([^\]]+)\]\s*\)$/i;
     const simpleAggMatch = daxExpression ? SIMPLE_AGG_RE.exec(daxExpression) : null;
 
     for (const roleCandidate of candidates) {
         try {
             let basePayload: any;
 
-            if (simpleAggMatch && isMeasure) {
+            if (simpleAggMatch) {
                 // DAX simple (SUM/AVG/COUNT) → Column binding con aggregationFunction
                 const aggFn = simpleAggMatch[1]; // SUM, AVERAGE, etc.
                 const aggTable = simpleAggMatch[2]; // tabla (ya resuelta por normalizeDax)
