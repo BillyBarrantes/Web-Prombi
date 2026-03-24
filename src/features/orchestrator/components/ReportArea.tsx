@@ -62,7 +62,15 @@ export default function ReportArea({ lastAction, actions, lastResult, isSidebarO
                 headers["Authorization"] = `Bearer ${session.access_token}`;
             }
 
-            const res = await fetch(`${(import.meta as any).env.VITE_API_URL}/api/v1/embed-config`, {
+            const apiKey = (import.meta as any).env.VITE_API_KEY;
+            if (apiKey) {
+                headers["X-API-Key"] = apiKey;
+            }
+
+            // Producción: usar same-origin (rewrites) para evitar CORS.
+            // Dev: permitir VITE_API_URL si está configurado.
+            const baseUrl = import.meta.env.DEV ? ((import.meta as any).env.VITE_API_URL || "") : "";
+            const res = await fetch(`${baseUrl}/api/v1/embed-config`, {
                 method: "POST",
                 headers: headers,
                 body: JSON.stringify({ report_id: reportId, tenant_id: tenantId })

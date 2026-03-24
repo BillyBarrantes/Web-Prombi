@@ -11,7 +11,9 @@
 import type { ChatRequest, ChatResponse, Conversation } from "./types";
 import { supabase } from "../../../lib/supabase";
 
-const API_BASE = import.meta.env.VITE_API_URL || "";
+// Producción (Vercel): usamos same-origin + rewrites (/api/* -> Cloud Run) para evitar CORS.
+// Desarrollo local: permitimos VITE_API_URL apuntando a backend local/remoto.
+const API_BASE = import.meta.env.DEV ? (import.meta.env.VITE_API_URL || "") : "";
 const API_KEY = import.meta.env.VITE_API_KEY || "";
 
 // WHY: El ciclo LangGraph puede tardar >40s en LIVE mode.
@@ -270,4 +272,3 @@ export async function uploadDataset(
         clearTimeout(timeoutId);
     }
 }
-
