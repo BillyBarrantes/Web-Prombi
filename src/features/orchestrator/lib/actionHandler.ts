@@ -584,24 +584,28 @@ async function addFieldWithRoleFallback(
     // → Solo se permite conversión de DAX simple (SUM/AVG) a column binding.
     const SIMPLE_AGG_RE = /^(SUM|AVERAGE|AVG|COUNT|COUNTA|MIN|MAX)\s*\(\s*'?([^'\[]+?)'?\s*\[([^\]]+)\]\s*\)$/i;
     const simpleAggMatch = daxExpression ? SIMPLE_AGG_RE.exec(daxExpression) : null;
+    const simpleAggInfo = simpleAggMatch ? {
+        fn: simpleAggMatch[1],
+        table: simpleAggMatch[2],
+        column: simpleAggMatch[3],
+        mappedAgg: mapAggregationFunction(simpleAggMatch[1]) || "Sum",
+        daxExpression,
+    } : null;
+    let triedCardMeasureFallback = false;
 
     for (const roleCandidate of candidates) {
         try {
             let basePayload: any;
 
-            if (simpleAggMatch) {
+            if (simpleAggInfo) {
                 // DAX simple (SUM/AVG/COUNT) → Column binding con aggregationFunction
-                const aggFn = simpleAggMatch[1]; // SUM, AVERAGE, etc.
-                const aggTable = simpleAggMatch[2]; // tabla (ya resuelta por normalizeDax)
-                const aggColumn = simpleAggMatch[3]; // columna
-                const mappedAgg = mapAggregationFunction(aggFn) || "Sum";
                 basePayload = {
                     $schema: "http://powerbi.com/product/schema#column",
-                    table: aggTable,
-                    column: aggColumn,
-                    aggregationFunction: mappedAgg,
+                    table: simpleAggInfo.table,
+                    column: simpleAggInfo.column,
+                    aggregationFunction: simpleAggInfo.mappedAgg,
                 };
-                console.log(`🔄 DAX simple convertido a column binding: ${daxExpression} → {table: "${aggTable}", column: "${aggColumn}", agg: "${mappedAgg}"}`);
+                console.log(`🔄 DAX simple convertido a column binding: ${simpleAggInfo.daxExpression} → {table: "${simpleAggInfo.table}", column: "${simpleAggInfo.column}", agg: "${simpleAggInfo.mappedAgg}"}`);
             } else if (normalized.isMeasureField && typeof roleValue === "object" && roleValue !== null && mapAggregationFunction(String((roleValue as DataRoleBinding).aggregation || ""))) {
                 basePayload = {
                     $schema: "http://powerbi.com/product/schema#column",
@@ -643,6 +647,35 @@ async function addFieldWithRoleFallback(
             await applyCardFieldFormatIfNeeded(visual, pbiVisualType, roleCandidate);
             return { ok: true };
         } catch (err: any) {
+            // Card fallback determinista: si la agregación no es SUM, algunos tenants/SDKs
+            // rechazan aggregationFunction="Average" en binding de columna para cards.
+            // Reintentamos UNA VEZ como measure inline (DAX simple) sobre el mismo rol.
+            if (
+                !triedCardMeasureFallback &&
+                isCardVisual &&
+                simpleAggInfo &&
+                simpleAggInfo.mappedAgg !== "Sum"
+            ) {
+                triedCardMeasureFallback = true;
+                try {
+                    const measurePayload = {
+                        $schema: "http://powerbi.com/product/schema#measure",
+                        table: simpleAggInfo.table,
+                        name: daxName || `Medida_${simpleAggInfo.mappedAgg}_${simpleAggInfo.column}`.slice(0, 120),
+                        expression: simpleAggInfo.daxExpression,
+                    };
+                    if (process.env.NODE_ENV !== "production") {
+                        console.log(`🧩 Card fallback measure → addDataField("${roleCandidate}", ${JSON.stringify(measurePayload)})`);
+                    }
+                    await visual.addDataField(roleCandidate, measurePayload);
+                    await applyCardFieldFormatIfNeeded(visual, pbiVisualType, roleCandidate);
+                    return { ok: true };
+                } catch (fallbackErr: any) {
+                    if (process.env.NODE_ENV !== "production") {
+                        console.warn("⚠️ Card measure fallback falló:", fallbackErr?.message || fallbackErr);
+                    }
+                }
+            }
             // DIAGNÓSTICO: Log del error exacto del SDK (antes era silencioso)
             if (process.env.NODE_ENV !== "production") {
                 console.warn(`⚠️ addDataField("${roleCandidate}") falló:`, err?.message || err);
