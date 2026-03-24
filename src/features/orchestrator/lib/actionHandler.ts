@@ -476,11 +476,17 @@ function getRoleCandidatesForVisual(
         if (visual === "clusteredcolumnchart" || visual === "columnchart" || visual === "linechart" || visual === "areachart") return ["Y"];
         if (visual === "piechart" || visual === "donutchart") return ["Values", "Y"];
         if (visual === "gauge") return ["Value", "Target", "Y", "Values"];
+        // FASE 15-FIX: Card visual en PBI SDK usa "Fields" como DataRole
+        // principal (kind=0/1). "Values" NO es un rol válido y causa
+        // "No se pudo inyectar" → rompe el loop de acciones.
+        if (visual === "card") return ["Fields", "Values", "Y"];
         return [normalizedRole, "Y", "Values"];
     }
 
     if (visual === "piechart" || visual === "donutchart") return ["Legend", "Category", "Series", "Details"];
     if (visual === "gauge") return ["Target", "Maximum", "Minimum", "Value"];
+    // FASE 15-FIX: Card visual no tiene ejes de categoría, solo "Fields".
+    if (visual === "card") return ["Fields", "Values", "Y"];
     return [normalizedRole, "Category", "Axis", "Series", "Legend", "Details"];
 }
 
@@ -1218,9 +1224,12 @@ export async function executeAction(payload: VisualAction | ChatResponse): Promi
 
     try {
         let explanationResultText: string | null = null;
+        const failedActions: Array<{ index: number; operation: string; message: string }> = [];
+        let succeededCount = 0;
+        let actionIndex = 0;
         for (const action of actions) {
             if (process.env.NODE_ENV !== "production") {
-                console.log(`Ejecutando [${action.operation}] en visual [${action.visualType || action.targetVisualName || "n/a"}]...`);
+                console.log(`Ejecutando [${action.operation}] (${actionIndex + 1}/${actions.length}) en visual [${action.visualType || action.targetVisualName || "n/a"}]...`);
             }
 
             let result: ActionResult;
@@ -1261,14 +1270,36 @@ export async function executeAction(payload: VisualAction | ChatResponse): Promi
                     };
             }
 
+            // FASE 15-FIX: Si una acción individual falla, loguear y continuar
+            // con las siguientes en vez de romper toda la cola.
+            // Esto evita que un visual con rol inválido impida la creación
+            // de los demás visuals del array de acciones.
             if (!result.success) {
-                return result;
+                console.warn(`⚠️ Acción [${action.operation}] falló: ${result.message} — continuando con las siguientes.`);
+                failedActions.push({ index: actionIndex, operation: action.operation, message: result.message });
+            } else {
+                succeededCount += 1;
             }
+            actionIndex += 1;
         }
+
+        if (succeededCount === 0 && failedActions.length > 0) {
+            // ALL actions failed → report failure
+            return {
+                success: false,
+                message: failedActions.map((f) => f.message).join(" | "),
+                operation: actions[actions.length - 1]?.operation || legacyOperation,
+                appliedToReport: false,
+            };
+        }
+
+        const failedSuffix = failedActions.length > 0
+            ? ` (${failedActions.length} acción(es) fallaron: ${failedActions.map((f) => f.operation).join(", ")})`
+            : "";
 
         return {
             success: true,
-            message: explanationResultText || `✅ ${actions.length} acción(es) ejecutadas secuencialmente.`,
+            message: explanationResultText || `✅ ${succeededCount}/${actions.length} acción(es) ejecutadas.${failedSuffix}`,
             operation: actions[actions.length - 1]?.operation || legacyOperation,
             appliedToReport: false,
         };
@@ -1585,16 +1616,30 @@ async function handleCreateVisual(
             }
         }
 
-        for (const [roleName, roleValue] of Object.entries(action.dataRoles || {})) {
+        // FASE 15-FIX: Inyección de roles resiliente — si un rol falla,
+        // loguear advertencia y continuar con los demás roles.
+        // Esto evita que un campo inválido impida renderizar el visual
+        // con los campos que SÍ se pudieron inyectar.
+        const roleEntries = Object.entries(action.dataRoles || {});
+        let injectedRoleCount = 0;
+        const failedRoles: string[] = [];
+        for (const [roleName, roleValue] of roleEntries) {
             const injected = await addFieldWithRoleFallback(targetVisual, pbiVisualType, roleName, roleValue, action);
             if (!injected.ok) {
-                return {
-                    success: false,
-                    message: injected.message || `No se pudo inyectar el rol requerido "${roleName}".`,
-                    operation: action.operation,
-                    appliedToReport: false,
-                };
+                console.warn(`⚠️ Rol "${roleName}" falló en visual "${pbiVisualType}": ${injected.message} — continuando.`);
+                failedRoles.push(roleName);
+            } else {
+                injectedRoleCount += 1;
             }
+        }
+
+        if (roleEntries.length > 0 && injectedRoleCount === 0) {
+            return {
+                success: false,
+                message: `No se pudo inyectar ningún rol en "${pbiVisualType}". Roles fallidos: ${failedRoles.join(", ")}.`,
+                operation: action.operation,
+                appliedToReport: false,
+            };
         }
 
         await applyCardDisplayUnitsIfNeeded(targetVisual, pbiVisualType);
