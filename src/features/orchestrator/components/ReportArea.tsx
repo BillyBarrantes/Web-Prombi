@@ -62,9 +62,10 @@ export default function ReportArea({ lastAction, actions, lastResult, isSidebarO
                 headers["Authorization"] = `Bearer ${session.access_token}`;
             }
 
-            const res = await fetch(`${(import.meta as any).env.VITE_API_URL}/api/v1/embed-config?report_id=${reportId}&tenant_id=${tenantId}`, {
+            const res = await fetch(`${(import.meta as any).env.VITE_API_URL}/api/v1/embed-config`, {
                 method: "POST",
-                headers: headers
+                headers: headers,
+                body: JSON.stringify({ report_id: reportId, tenant_id: tenantId })
             });
 
             if (!res.ok) {
