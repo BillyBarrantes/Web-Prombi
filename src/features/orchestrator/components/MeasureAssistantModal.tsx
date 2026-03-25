@@ -116,10 +116,10 @@ export default function MeasureAssistantModal({
     };
 
     return (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/60" />
+        <div className="fixed inset-0 z-[80] flex items-center justify-center pointer-events-none">
+            <div className="absolute inset-0 bg-black/60 pointer-events-none" />
 
-            <div className="relative w-full max-w-2xl mx-4 rounded-2xl border border-white/10 bg-[var(--color-bg-secondary)] shadow-2xl overflow-hidden">
+            <div className="relative w-full max-w-2xl mx-4 rounded-2xl border border-white/10 bg-[var(--color-bg-secondary)] shadow-2xl overflow-hidden pointer-events-auto">
                 <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
                     <div>
                         <div className="text-sm font-semibold text-[var(--color-text-primary)]">
@@ -141,10 +141,11 @@ export default function MeasureAssistantModal({
                 <div className="p-6 space-y-4">
                     <div className="space-y-1">
                         <div className="text-sm font-medium text-[var(--color-text-primary)]">
-                            1) Crea esta medida en Power BI Desktop
+                            1) Si ya existe, solo arrastrala
                         </div>
                         <div className="text-xs text-[var(--color-text-secondary)]">
-                            Modelado → Nueva medida. Nombre sugerido:{" "}
+                            Si ves la medida en el panel Datos (icono calculadora), arrastrala a la tarjeta vacia.
+                            Si NO existe: Modelado → Nueva medida. Nombre sugerido: {" "}
                             <span className="font-semibold">{measureName || "(elige un nombre)"}</span>
                         </div>
                     </div>
@@ -182,7 +183,7 @@ export default function MeasureAssistantModal({
                     )}
 
                     <div className="text-xs text-[var(--color-text-muted)]">
-                        2) Arrastra la medida a la tarjeta vacía. Este modal detectará el cambio y se cerrará automáticamente.
+                        2) Arrastra la medida a la tarjeta vacia (puedes hacerlo con este asistente abierto). Este modal detectara el cambio y se cerrara automaticamente.
                         Si tu organización bloquea edición, pide permisos o crea la medida en el dataset original.
                     </div>
                 </div>
