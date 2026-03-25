@@ -13,6 +13,17 @@ export interface ActionResult {
     appliedToReport: boolean;
 }
 
+function shouldDebugPbi(): boolean {
+    if (typeof window === "undefined") return false;
+    try {
+        const qs = new URLSearchParams(window.location.search);
+        if (qs.has("pbi_debug")) return true;
+        return window.localStorage?.getItem("PBI_DEBUG") === "1";
+    } catch {
+        return false;
+    }
+}
+
 const PBI_VISUAL_TYPE_MAP: Record<string, string> = {
     barChart: "clusteredBarChart",
     columnChart: "clusteredColumnChart",
@@ -592,6 +603,8 @@ async function addFieldWithRoleFallback(
         daxExpression,
     } : null;
     let triedCardMeasureFallback = false;
+    const debugPbi = shouldDebugPbi();
+    const attemptErrors: Array<{ role: string; kind: string; message: string }> = [];
 
     for (const roleCandidate of candidates) {
         try {
@@ -633,14 +646,14 @@ async function addFieldWithRoleFallback(
             delete basePayload.property;
 
             // DIAGNÓSTICO: Log del payload exacto que se envía al SDK
-            if (process.env.NODE_ENV !== "production") {
+            if (debugPbi) {
                 console.log(`📊 addDataField("${roleCandidate}", ${JSON.stringify(basePayload)}) en visual "${pbiVisualType}"`);
             }
 
             const result = await visual.addDataField(roleCandidate, basePayload);
 
             // DIAGNÓSTICO: Log del resultado del SDK
-            if (process.env.NODE_ENV !== "production") {
+            if (debugPbi) {
                 console.log(`✅ addDataField("${roleCandidate}") → resultado:`, result);
             }
 
@@ -664,29 +677,41 @@ async function addFieldWithRoleFallback(
                         name: daxName || `Medida_${simpleAggInfo.mappedAgg}_${simpleAggInfo.column}`.slice(0, 120),
                         expression: simpleAggInfo.daxExpression,
                     };
-                    if (process.env.NODE_ENV !== "production") {
+                    if (debugPbi) {
                         console.log(`🧩 Card fallback measure → addDataField("${roleCandidate}", ${JSON.stringify(measurePayload)})`);
                     }
                     await visual.addDataField(roleCandidate, measurePayload);
                     await applyCardFieldFormatIfNeeded(visual, pbiVisualType, roleCandidate);
                     return { ok: true };
                 } catch (fallbackErr: any) {
-                    if (process.env.NODE_ENV !== "production") {
+                    if (debugPbi) {
                         console.warn("⚠️ Card measure fallback falló:", fallbackErr?.message || fallbackErr);
                     }
+                    attemptErrors.push({
+                        role: roleCandidate,
+                        kind: "measure",
+                        message: String(fallbackErr?.detailedMessage || fallbackErr?.message || fallbackErr || "unknown").slice(0, 400),
+                    });
                 }
             }
             // DIAGNÓSTICO: Log del error exacto del SDK (antes era silencioso)
-            if (process.env.NODE_ENV !== "production") {
+            if (debugPbi) {
                 console.warn(`⚠️ addDataField("${roleCandidate}") falló:`, err?.message || err);
             }
+            attemptErrors.push({
+                role: roleCandidate,
+                kind: "column",
+                message: String(err?.detailedMessage || err?.message || err || "unknown").slice(0, 400),
+            });
             // continue con el siguiente candidato
         }
     }
 
     return {
         ok: false,
-        message: `No se pudo inyectar el rol "${roleName}" en el visual "${pbiVisualType}" con candidatos: ${candidates.join(", ")}.`,
+        message: debugPbi && attemptErrors.length
+            ? `No se pudo inyectar el rol "${roleName}" en el visual "${pbiVisualType}". Intentos: ${attemptErrors.map(e => `${e.role}:${e.kind}:${e.message}`).join(" | ")}`
+            : `No se pudo inyectar el rol "${roleName}" en el visual "${pbiVisualType}" con candidatos: ${candidates.join(", ")}.`,
     };
 }
 
