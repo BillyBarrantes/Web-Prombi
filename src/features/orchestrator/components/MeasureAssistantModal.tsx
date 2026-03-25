@@ -63,6 +63,10 @@ export default function MeasureAssistantModal({ open, detail, templates, onClose
             setRetryResult(null);
             const res = await executeAction(detail.retry_action);
             setRetryResult(res);
+            if (res.success) {
+                // UX: cerrar automáticamente al éxito para no bloquear el flujo.
+                setTimeout(() => onClose(), 800);
+            }
         } finally {
             setRetrying(false);
         }

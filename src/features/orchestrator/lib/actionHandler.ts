@@ -442,6 +442,17 @@ function normalizeDataRoleBinding(
         };
     }
 
+    // Measure reference (medida ya existente en el modelo): { table, measure }
+    // WHY: El Asistente guía al usuario a crear una medida en Power BI Desktop y luego
+    // reintentamos apuntando a esa medida por nombre (sin inventar columnas).
+    if (binding.table && binding.measure && !binding.column) {
+        return {
+            table: String(binding.table).trim(),
+            column: String(binding.measure).trim(), // placeholder para pasar validación; el SDK usa binding.measure
+            isMeasureField: true,
+        };
+    }
+
     if (binding.ref && typeof binding.ref === "string") {
         const parsed = parseTableColumnRef(binding.ref);
         if (!parsed) return null;
@@ -683,7 +694,7 @@ async function addFieldWithRoleFallback(
                 if (debugPbi) {
                     console.log(`🔗 Measure ref binding → {table: "${normalized.table}", measure: "${String(bindingObj.measure).trim()}"}`);
                 }
-            } else             if (simpleAggInfo) {
+            } else if (simpleAggInfo) {
                 // DAX simple (SUM/AVG/COUNT) → Column binding con aggregationFunction
                 basePayload = {
                     $schema: "http://powerbi.com/product/schema#column",
@@ -733,6 +744,27 @@ async function addFieldWithRoleFallback(
             await applyCardFieldFormatIfNeeded(visual, pbiVisualType, roleCandidate);
             return { ok: true };
         } catch (err: any) {
+            // Measure ref fallback (cross-tenant): algunos SDKs esperan {name} en lugar de {measure}.
+            if (
+                basePayload &&
+                basePayload.$schema === "http://powerbi.com/product/schema#measure" &&
+                typeof basePayload.measure === "string"
+            ) {
+                try {
+                    const altPayload = { ...basePayload };
+                    delete altPayload.measure;
+                    altPayload.name = String(basePayload.measure).trim();
+                    if (debugPbi) {
+                        console.log(`🔁 Measure ref alt → addDataField("${roleCandidate}", ${JSON.stringify(altPayload)})`);
+                    }
+                    await visual.addDataField(roleCandidate, altPayload);
+                    await applyCardFieldFormatIfNeeded(visual, pbiVisualType, roleCandidate);
+                    return { ok: true };
+                } catch {
+                    // continue with normal fallbacks
+                }
+            }
+
             // Card: algunos tenants/SDKs aceptan "Average" y otros "Avg".
             // Intentar ambas variantes antes de caer al fallback de measure.
             if (
