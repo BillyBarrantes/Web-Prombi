@@ -771,6 +771,10 @@ async function addFieldWithRoleFallback(
                         { $schema: "http://powerbi.com/product/schema#measure", measure: measureName },
                         { $schema: "http://powerbi.com/product/schema#measure", table: basePayload.table, name: bracketed },
                         { $schema: "http://powerbi.com/product/schema#measure", name: bracketed },
+                    
+                        // MEASURE_AS_COLUMN: algunos tenants exponen medidas como dataField tipo columna.
+                        { $schema: "http://powerbi.com/product/schema#column", table: basePayload.table, column: measureName },
+                        { $schema: "http://powerbi.com/product/schema#column", table: basePayload.table, column: bracketed },
                     ];
 
                     const roleFallbacks = ["Fields", roleCandidate].filter(
