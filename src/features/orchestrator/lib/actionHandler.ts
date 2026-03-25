@@ -806,22 +806,43 @@ async function addFieldWithRoleFallback(
                         // Sugerencia guiada: para obtener conteo ÚNICO real, crea la medida en el modelo.
                         const measureName = (daxName || `${String(basePayload.column || "Campo")} únicos`).trim();
                         const daxExpr = `DISTINCTCOUNT('${basePayload.table}'[${basePayload.column}])`;
+
+                        const desiredTitle = String(action?.format?.title || action?.title || `Únicos de ${String(basePayload.column || "campo")}`).trim();
+                        const tempTitle = desiredTitle ? `${desiredTitle} (Temporal: recuento)` : "";
+                        if (tempTitle && typeof (visual as any)?.setProperty === "function") {
+                            try {
+                                await (visual as any).setProperty(
+                                    { objectName: "title", propertyName: "visible" },
+                                    { value: true }
+                                );
+                                await (visual as any).setProperty(
+                                    { objectName: "title", propertyName: "titleText" },
+                                    { value: tempTitle }
+                                );
+                            } catch {
+                                // ignore title update failures
+                            }
+                        }
+
+                        // Importante: el Retry debe ACTUALIZAR este mismo visual (no crear otro).
+                        const targetVisualName = String((visual as any)?.name || "").trim();
                         const retryAction: VisualAction = {
-                            operation: "CREATE",
-                            visualType: "card",
-                            title: action?.title || `Únicos de ${String(basePayload.column || "campo")}`,
+                            operation: "UPDATE",
+                            targetVisualName: targetVisualName || null,
                             dataRoles: {
                                 Values: { table: basePayload.table, measure: measureName },
                             },
                             dax_name: measureName,
-                            layout_intent: action?.layout_intent || "kpi_top",
+                            // UPDATE no usa action.title; title debe ir vía format para setProperty.
+                            format: desiredTitle ? { title: desiredTitle } : null,
                         };
+
                         emitMeasureAssistantOpen({
                             template_id: "distinct_count",
                             vars: { table: basePayload.table, column: basePayload.column },
                             dax: daxExpr,
                             measure_name: measureName,
-                            title: retryAction.title || undefined,
+                            title: desiredTitle || undefined,
                             reason: "Para 'únicos/distintos' en tarjetas, crea esta medida una sola vez en Power BI Desktop.",
                             retry_action: retryAction,
                         });
