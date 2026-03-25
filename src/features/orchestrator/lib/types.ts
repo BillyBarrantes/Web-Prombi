@@ -181,6 +181,8 @@ export interface MeasureTemplateListResponse {
 }
 
 export interface MeasureAssistantOpenDetail {
+    target_visual_name?: string;
+
     template_id?: string;
     vars?: Record<string, string>;
     dax?: string;

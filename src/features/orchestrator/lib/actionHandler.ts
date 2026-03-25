@@ -834,58 +834,26 @@ async function addFieldWithRoleFallback(
                 // degradar a Count (no-dedup) para evitar tarjetas vacías.
                 // Nota: el backend/UI debe indicar esta degradación si el usuario pidió "únicos".
                 if (String(basePayload.aggregationFunction).toLowerCase() === "distinctcount") {
-                    try {
-                        await visual.addDataField(roleCandidate, { ...basePayload, aggregationFunction: "Count" });
-                        await applyCardFieldFormatIfNeeded(visual, pbiVisualType, roleCandidate);
-                        
-                        // Sugerencia guiada: para obtener conteo ÚNICO real, crea la medida en el modelo.
-                        const measureName = (daxName || `${String(basePayload.column || "Campo")} únicos`).trim();
-                        const daxExpr = `DISTINCTCOUNT('${basePayload.table}'[${basePayload.column}])`;
+                    // DistinctCount en cards está bloqueado en algunos tenants/SDKs.
+                    // Regla de producto: NO mostrar un KPI incorrecto (Count) ni intentar inyección automática.
+                    // En su lugar: abrir Asistente y pedir al usuario arrastrar la medida al visual.
 
-                        const desiredTitle = String(action?.format?.title || action?.title || `Únicos de ${String(basePayload.column || "campo")}`).trim();
-                        const tempTitle = desiredTitle ? `${desiredTitle} (Temporal: recuento)` : "";
-                        if (tempTitle && typeof (visual as any)?.setProperty === "function") {
-                            try {
-                                await (visual as any).setProperty(
-                                    { objectName: "title", propertyName: "visible" },
-                                    { value: true }
-                                );
-                                await (visual as any).setProperty(
-                                    { objectName: "title", propertyName: "titleText" },
-                                    { value: tempTitle }
-                                );
-                            } catch {
-                                // ignore title update failures
-                            }
-                        }
+                    const measureName = (daxName || `${String(basePayload.column || "Campo")} únicos`).trim();
+                    const daxExpr = `DISTINCTCOUNT('${basePayload.table}'[${basePayload.column}])`;
+                    const desiredTitle = String(action?.format?.title || action?.title || `Total de ${String(basePayload.column || "campo")} únicos`).trim();
+                    const targetVisualName = String((visual as any)?.name || "").trim();
 
-                        // Importante: el Retry debe ACTUALIZAR este mismo visual (no crear otro).
-                        const targetVisualName = String((visual as any)?.name || "").trim();
-                        const retryAction: VisualAction = {
-                            operation: "UPDATE",
-                            targetVisualName: targetVisualName || null,
-                            dataRoles: {
-                                Values: { table: basePayload.table, measure: measureName },
-                            },
-                            dax_name: measureName,
-                            // UPDATE no usa action.title; title debe ir vía format para setProperty.
-                            format: desiredTitle ? { title: desiredTitle } : null,
-                        };
+                    emitMeasureAssistantOpen({
+                        template_id: "distinct_count",
+                        vars: { table: basePayload.table, column: basePayload.column },
+                        dax: daxExpr,
+                        measure_name: measureName,
+                        title: desiredTitle || undefined,
+                        target_visual_name: targetVisualName || undefined,
+                        reason: "Este KPI requiere una medida en el modelo. Créala y luego arrástrala a la tarjeta. Después presiona Verificar.",
+                    });
 
-                        emitMeasureAssistantOpen({
-                            template_id: "distinct_count",
-                            vars: { table: basePayload.table, column: basePayload.column },
-                            dax: daxExpr,
-                            measure_name: measureName,
-                            title: desiredTitle || undefined,
-                            reason: "Para 'únicos/distintos' en tarjetas, crea esta medida una sola vez en Power BI Desktop.",
-                            retry_action: retryAction,
-                        });
-
-return { ok: true };
-                    } catch {
-                        // continue to measure fallback
-                    }
+                    return { ok: true };
                 }
 
 

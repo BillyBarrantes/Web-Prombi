@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { MeasureAssistantOpenDetail, MeasureTemplate } from "../lib/types";
 import type { ActionResult } from "../lib/actionHandler";
-import { executeAction } from "../lib/actionHandler";
-
+import { getActivePowerBiReport } from "../lib/pbiRuntime";
 interface MeasureAssistantModalProps {
     open: boolean;
     detail: MeasureAssistantOpenDetail | null;
@@ -57,16 +56,80 @@ export default function MeasureAssistantModal({ open, detail, templates, onClose
     };
 
     const handleRetry = async () => {
-        if (!detail.retry_action) return;
         try {
             setRetrying(true);
             setRetryResult(null);
-            const res = await executeAction(detail.retry_action);
-            setRetryResult(res);
-            if (res.success) {
-                // UX: cerrar automáticamente al éxito para no bloquear el flujo.
-                setTimeout(() => onClose(), 800);
+
+            const report = getActivePowerBiReport();
+            if (!report) {
+                setRetryResult({
+                    success: false,
+                    message: "Power BI report no está listo aún.",
+                    operation: "VERIFY",
+                    appliedToReport: false,
+                });
+                return;
             }
+
+            const targetVisualName = String(detail.target_visual_name || "").trim();
+            if (!targetVisualName) {
+                setRetryResult({
+                    success: false,
+                    message: "No se pudo identificar la tarjeta objetivo para verificar.",
+                    operation: "VERIFY",
+                    appliedToReport: false,
+                });
+                return;
+            }
+
+            const page = await report.getActivePage();
+            const visuals = await page.getVisuals();
+            const visual = (Array.isArray(visuals)
+                ? visuals.find((v: any) => String(v?.name || "").trim() === targetVisualName)
+                : null) || null;
+
+            if (!visual || typeof visual.getDataFields !== "function") {
+                setRetryResult({
+                    success: false,
+                    message: "No se encontró la tarjeta objetivo o no soporta verificación.",
+                    operation: "VERIFY",
+                    appliedToReport: false,
+                });
+                return;
+            }
+
+            const roles = ["Fields", "Values", "Y"];
+            let hasAnyField = false;
+            for (const role of roles) {
+                try {
+                    const fields = await visual.getDataFields(role);
+                    if (Array.isArray(fields) && fields.length > 0) {
+                        hasAnyField = true;
+                        break;
+                    }
+                } catch {
+                    // ignore
+                }
+            }
+
+            if (hasAnyField) {
+                const res: ActionResult = {
+                    success: true,
+                    message: "✅ Listo. La medida ya está asignada a la tarjeta.",
+                    operation: "VERIFY",
+                    appliedToReport: true,
+                };
+                setRetryResult(res);
+                setTimeout(() => onClose(), 800);
+                return;
+            }
+
+            setRetryResult({
+                success: false,
+                message: "Aún no se asignó la medida a la tarjeta. Arrastra la medida al visual y vuelve a verificar.",
+                operation: "VERIFY",
+                appliedToReport: false,
+            });
         } finally {
             setRetrying(false);
         }
@@ -79,12 +142,12 @@ export default function MeasureAssistantModal({ open, detail, templates, onClose
                     <div className="flex items-center gap-2">                        <button onClick={handleCopy} className="px-3 py-2.5 text-sm rounded-lg bg-white/10 hover:bg-white/15 text-white border border-white/10">                            {copied ? "Copiado" : "Copiar DAX"}                        </button>                        <button
                             onClick={handleRetry}
                             disabled={!detail.retry_action || retrying}
-                            className="px-4 py-2.5 text-sm rounded-lg bg-[var(--color-accent)] hover:brightness-110 text-white font-semibold shadow-sm disabled:opacity-50 min-w-[120px]">                            {retrying ? "Reintentando..." : "Reintentar"}                        </button>                        <div className="ml-auto text-[10px] text-[var(--color-text-muted)]">                            Power BI Desktop (Windows)                        </div>                    </div>
+                            className="px-4 py-2.5 text-sm rounded-lg bg-[var(--color-accent)] hover:brightness-110 text-white font-semibold shadow-sm disabled:opacity-50 min-w-[120px]">                            {retrying ? "Verificando..." : "Verificar"}                        </button>                        <div className="ml-auto text-[10px] text-[var(--color-text-muted)]">                            Power BI Desktop (Windows)                        </div>                    </div>
                     {retryResult && (
                         <div className="text-xs text-[var(--color-text-secondary)]">                            {retryResult.success ? `✅ ${retryResult.message}` : `⚠️ ${retryResult.message}`}
                         </div>
                     )}
 
-                    <div className="text-xs text-[var(--color-text-muted)]">                        2) Guarda el reporte y vuelve a intentar. Si tu organización bloquea edición, pide permisos de edición o crea la medida en el dataset original.                    </div>                </div>            </div>        </div>
+                    <div className="text-xs text-[var(--color-text-muted)]">                        2) Arrastra la medida al visual (tarjeta) y presiona Verificar. Si tu organización bloquea edición, pide permisos o crea la medida en el dataset original.                    </div>                </div>            </div>        </div>
     );
 }
