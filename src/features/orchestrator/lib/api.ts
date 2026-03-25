@@ -8,7 +8,7 @@
  * 4. Timeout automático con AbortController (Phase 4).
  */
 
-import type { ChatRequest, ChatResponse, Conversation } from "./types";
+import type { ChatRequest, ChatResponse, Conversation, MeasureTemplate, MeasureTemplateListResponse } from "./types";
 import { supabase } from "../../../lib/supabase";
 
 // Producción (Vercel): usamos same-origin + rewrites (/api/* -> Cloud Run) para evitar CORS.
@@ -194,6 +194,17 @@ export async function checkHealth(): Promise<{
     pbi_mode: string;
 }> {
     return apiFetch("/health", {}, 5_000); // 5s timeout for health check
+}
+
+
+
+// ── Measure Templates (Guided Onboarding) ───────────────────
+
+export async function getMeasureTemplates(): Promise<MeasureTemplate[]> {
+    const res = await apiFetch<MeasureTemplateListResponse>("/api/v1/measure-templates", {
+        method: "GET",
+    });
+    return res.templates || [];
 }
 
 // ── Dataset Upload (Phase 5) ────────────────────────────────

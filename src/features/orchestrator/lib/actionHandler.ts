@@ -2,7 +2,7 @@
  * Action Handler — Bridges AI-generated VisualAction JSON with Power BI JS SDK.
  */
 
-import type { ChatResponse, VisualAction } from "./types";
+import type { ChatResponse, VisualAction, MeasureAssistantOpenDetail } from "./types";
 import type { models } from "powerbi-client";
 import { getActivePowerBiReport, resolveRealTableName, getDiscoveredTables, discoverModelTables } from "./pbiRuntime";
 
@@ -24,6 +24,14 @@ function shouldDebugPbi(): boolean {
     }
 }
 
+function emitMeasureAssistantOpen(detail: MeasureAssistantOpenDetail): void {
+    if (typeof window === "undefined") return;
+    try {
+        window.dispatchEvent(new CustomEvent("measure-assistant:open", { detail }));
+    } catch {
+        // ignore
+    }
+}
 async function getSupportedRoleNames(visual: any): Promise<string[]> {
     if (!visual || typeof visual.getCapabilities !== "function") return [];
     try {
@@ -661,7 +669,21 @@ async function addFieldWithRoleFallback(
         let basePayload: any = null;
         try {
 
-            if (simpleAggInfo) {
+
+
+            const bindingObj = (typeof roleValue === "object" && roleValue !== null) ? (roleValue as any) : null;
+            const hasMeasureRef = Boolean(bindingObj?.measure) && !bindingObj?.column;
+
+            if (hasMeasureRef) {
+                basePayload = {
+                    $schema: "http://powerbi.com/product/schema#measure",
+                    table: normalized.table,
+                    measure: String(bindingObj.measure).trim(),
+                };
+                if (debugPbi) {
+                    console.log(`🔗 Measure ref binding → {table: "${normalized.table}", measure: "${String(bindingObj.measure).trim()}"}`);
+                }
+            } else             if (simpleAggInfo) {
                 // DAX simple (SUM/AVG/COUNT) → Column binding con aggregationFunction
                 basePayload = {
                     $schema: "http://powerbi.com/product/schema#column",
@@ -686,7 +708,7 @@ async function addFieldWithRoleFallback(
             }
 
             // FASE 11: Forzar agregación para CUALQUIER columna numérica en rol de medida
-            if (isMeasure && !basePayload.daxExpression && !basePayload.aggregationFunction) {
+            if (isMeasure && basePayload?.$schema === "http://powerbi.com/product/schema#column" && !basePayload.daxExpression && !basePayload.aggregationFunction) {
                 basePayload.aggregationFunction = "Sum";
             }
 
@@ -748,7 +770,31 @@ async function addFieldWithRoleFallback(
                     try {
                         await visual.addDataField(roleCandidate, { ...basePayload, aggregationFunction: "Count" });
                         await applyCardFieldFormatIfNeeded(visual, pbiVisualType, roleCandidate);
-                        return { ok: true };
+                        
+                        // Sugerencia guiada: para obtener conteo ÚNICO real, crea la medida en el modelo.
+                        const measureName = (daxName || `${String(basePayload.column || "Campo")} únicos`).trim();
+                        const daxExpr = `DISTINCTCOUNT('${basePayload.table}'[${basePayload.column}])`;
+                        const retryAction: VisualAction = {
+                            operation: "CREATE",
+                            visualType: "card",
+                            title: action?.title || `Únicos de ${String(basePayload.column || "campo")}`,
+                            dataRoles: {
+                                Values: { table: basePayload.table, measure: measureName },
+                            },
+                            dax_name: measureName,
+                            layout_intent: action?.layout_intent || "kpi_top",
+                        };
+                        emitMeasureAssistantOpen({
+                            template_id: "distinct_count",
+                            vars: { table: basePayload.table, column: basePayload.column },
+                            dax: daxExpr,
+                            measure_name: measureName,
+                            title: retryAction.title || undefined,
+                            reason: "Para 'únicos/distintos' en tarjetas, crea esta medida una sola vez en Power BI Desktop.",
+                            retry_action: retryAction,
+                        });
+
+return { ok: true };
                     } catch {
                         // continue to measure fallback
                     }

@@ -163,3 +163,29 @@ export const OPERATION_LABELS: Record<string, { label: string; color: string }> 
     UNKNOWN: { label: "No Reconocido", color: "#6b7280" },
     ERROR: { label: "Error", color: "#ef4444" },
 };
+
+
+// ── Measure Templates (Guided Onboarding) ───────────────────
+
+export interface MeasureTemplate {
+    id: string;
+    display_name: string;
+    description?: string;
+    dax_template: string;
+    required_vars: string[];
+}
+
+export interface MeasureTemplateListResponse {
+    status: string;
+    templates: MeasureTemplate[];
+}
+
+export interface MeasureAssistantOpenDetail {
+    template_id?: string;
+    vars?: Record<string, string>;
+    dax?: string;
+    measure_name?: string;
+    title?: string;
+    reason?: string;
+    retry_action?: VisualAction;
+}

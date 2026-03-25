@@ -7,13 +7,15 @@
  */
 
 import { useState, useEffect } from "react";
-import type { VisualAction } from "../lib/types";
+import type { VisualAction, MeasureAssistantOpenDetail, MeasureTemplate } from "../lib/types";
 import { VISUAL_TYPE_LABELS, OPERATION_LABELS } from "../lib/types";
 import type { ActionResult } from "../lib/actionHandler";
+import { getMeasureTemplates } from "../lib/api";
 import { supabase } from "../../../lib/supabase";
 
 // Dynamically import PowerBIEmbed to avoid SSR issues
 import PowerBIEmbed from "./PowerBIEmbed";
+import MeasureAssistantModal from "./MeasureAssistantModal";
 
 interface ReportAreaProps {
     lastAction: VisualAction | null;
@@ -36,11 +38,37 @@ export default function ReportArea({ lastAction, actions, lastResult, isSidebarO
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isSynced, setIsSynced] = useState(false);
+    const [measureAssistantOpen, setMeasureAssistantOpen] = useState(false);
+    const [measureAssistantDetail, setMeasureAssistantDetail] = useState<MeasureAssistantOpenDetail | null>(null);
+    const [measureTemplates, setMeasureTemplates] = useState<MeasureTemplate[]>([]);
+
+    const loadMeasureTemplates = async () => {
+        try {
+            const templates = await getMeasureTemplates();
+            setMeasureTemplates(templates);
+        } catch {
+            // ignore: el modal puede mostrar detail.dax aunque el catálogo no cargue
+        }
+    };
+
 
     const activeFilters = actions.filter((a) => a.operation === "FILTER");
     const visuals = actions.filter(
         (a) => a.operation === "CREATE" || a.operation === "CREATE_VISUAL"
     );
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const handler = (ev: any) => {
+            const detail = ev?.detail as MeasureAssistantOpenDetail | undefined;
+            if (!detail) return;
+            setMeasureAssistantDetail(detail);
+            setMeasureAssistantOpen(true);
+        };
+        window.addEventListener("measure-assistant:open", handler as any);
+        return () => window.removeEventListener("measure-assistant:open", handler as any);
+    }, []);
+
 
     // Handle Manual Sync
     const handleSync = async () => {
@@ -418,6 +446,15 @@ export default function ReportArea({ lastAction, actions, lastResult, isSidebarO
                     </div>
                 )}
             </div>
+
+
+            <MeasureAssistantModal
+                open={measureAssistantOpen}
+                detail={measureAssistantDetail}
+                templates={measureTemplates}
+                onClose={() => setMeasureAssistantOpen(false)}
+                onLoadTemplates={loadMeasureTemplates}
+            />
         </div>
     );
 }
