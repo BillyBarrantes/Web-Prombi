@@ -1549,6 +1549,19 @@ export async function executeAction(payload: VisualAction | ChatResponse): Promi
                     result = await handleDeleteVisual(report, action);
                     break;
 
+                case "ERROR":
+                    // Backend returned an error placeholder action; surface message but do not attempt SDK calls.
+                    result = {
+                        success: false,
+                        message:
+                            (action as any).message ||
+                            (action as any).details ||
+                            "No se pudo ejecutar la acción (ERROR del backend).",
+                        operation: action.operation,
+                        appliedToReport: false,
+                    };
+                    break;
+
                 default:
                     result = {
                         success: false,
