@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 
 const HeroPromtBI = () => {
   return (
@@ -21,9 +22,12 @@ const HeroPromtBI = () => {
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
-          <button className="px-8 py-4 bg-white text-black font-bold rounded-xl hover:bg-blue-500 hover:text-white transition-all duration-300 transform hover:scale-105 shadow-[0_0_20px_rgba(255,255,255,0.1)]">
-            Integrar PromtBI en mi empresa
-          </button>
+          <Link
+            to="/login"
+            className="px-8 py-4 bg-white text-black font-bold rounded-xl hover:bg-blue-500 hover:text-white transition-all duration-300 transform hover:scale-105 shadow-[0_0_20px_rgba(255,255,255,0.1)] text-center"
+          >
+            Comenzar Ahora →
+          </Link>
           <button className="px-8 py-4 bg-transparent text-white font-semibold border border-white/10 rounded-xl hover:bg-white/5 transition-all">
             Ver Demo Interactiva
           </button>
