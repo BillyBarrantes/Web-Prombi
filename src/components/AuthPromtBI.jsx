@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Mail, Lock, ArrowRight, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
 const AuthPromtBI = () => {
@@ -9,13 +9,14 @@ const AuthPromtBI = () => {
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleMicrosoftLogin = async () => {
     await supabase.auth.signInWithOAuth({ 
       provider: 'azure', 
       options: { 
         scopes: 'offline_access https://analysis.windows.net/powerbi/api/Report.Read.All https://analysis.windows.net/powerbi/api/Dataset.Read.All https://analysis.windows.net/powerbi/api/Workspace.Read.All',
-        redirectTo: window.location.origin + '/dashboard' 
+        redirectTo: window.location.origin + '/dashboard' + (location.search || '')
       } 
     });
   };
@@ -43,7 +44,7 @@ const AuthPromtBI = () => {
 
       if (!authError) {
         // Redirigir explícitamente al dashboard si no hay error
-        navigate('/dashboard');
+        navigate('/dashboard' + (location.search || ''));
       } else {
         alert(authError.message);
       }

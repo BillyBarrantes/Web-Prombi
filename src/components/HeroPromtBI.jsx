@@ -1,7 +1,8 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 const HeroPromtBI = () => {
+  const { search } = useLocation();
   return (
     <section className="relative bg-[#050505] text-white overflow-hidden py-20 lg:py-32">
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[600px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none"></div>
@@ -23,7 +24,7 @@ const HeroPromtBI = () => {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
           <Link
-            to="/login"
+            to={`/login${search}`}
             className="px-8 py-4 bg-white text-black font-bold rounded-xl hover:bg-blue-500 hover:text-white transition-all duration-300 transform hover:scale-105 shadow-[0_0_20px_rgba(255,255,255,0.1)] text-center"
           >
             Comenzar Ahora →

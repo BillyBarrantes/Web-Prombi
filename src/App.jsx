@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
 import HeroPromtBI from './components/HeroPromtBI'
 import HowItWorksPromtBI from './components/HowItWorksPromtBI'
@@ -23,9 +23,15 @@ const LandingPageComponents = () => (
   </main>
 );
 
+/** Preserva query params (?pbi_debug=1, etc.) en redirecciones internas */
+const NavigateWithSearch = ({ to, replace }) => {
+  const { search } = useLocation();
+  return <Navigate to={`${to}${search}`} replace={replace} />;
+};
+
 const ProtectedRoute = ({ children, session }) => {
   if (!session) {
-    return <Navigate to="/login" replace />;
+    return <NavigateWithSearch to="/login" replace />;
   }
   return children;
 };
@@ -49,7 +55,7 @@ export default function App() {
         <Route 
           path="/" 
           element={
-            session ? <Navigate to="/dashboard" replace /> : <LandingPageComponents />
+            session ? <NavigateWithSearch to="/dashboard" replace /> : <LandingPageComponents />
           } 
         />
         
@@ -57,7 +63,7 @@ export default function App() {
         <Route 
           path="/login" 
           element={
-            session ? <Navigate to="/dashboard" replace /> : <AuthPromtBI />
+            session ? <NavigateWithSearch to="/dashboard" replace /> : <AuthPromtBI />
           } 
         />
 
