@@ -760,7 +760,38 @@ async function addFieldWithRoleFallback(
                     await visual.addDataField(roleCandidate, altPayload);
                     await applyCardFieldFormatIfNeeded(visual, pbiVisualType, roleCandidate);
                     return { ok: true };
-                } catch {
+                } catch (altErr: any) {
+                    // Más variantes cross-tenant: algunos SDKs requieren payload sin table,
+                    // otros esperan el nombre bracketed o el rol "Fields" para measures en cards.
+                    const measureName = String(basePayload.measure).trim();
+                    const bracketed = measureName.startsWith("[") ? measureName : `[${measureName}]`;
+                    const payloads = [
+                        { $schema: "http://powerbi.com/product/schema#measure", table: basePayload.table, name: measureName },
+                        { $schema: "http://powerbi.com/product/schema#measure", name: measureName },
+                        { $schema: "http://powerbi.com/product/schema#measure", measure: measureName },
+                        { $schema: "http://powerbi.com/product/schema#measure", table: basePayload.table, name: bracketed },
+                        { $schema: "http://powerbi.com/product/schema#measure", name: bracketed },
+                    ];
+
+                    const roleFallbacks = ["Fields", roleCandidate].filter(
+                        (v, i, a) => a.findIndex((x) => String(x).toLowerCase() === String(v).toLowerCase()) === i
+                    );
+
+                    for (const rc of roleFallbacks) {
+                        for (const p of payloads) {
+                            try {
+                                if (debugPbi) {
+                                    console.log(`🧪 Measure ref variant → addDataField("${rc}", ${JSON.stringify(p)})`);
+                                }
+                                await visual.addDataField(rc, p);
+                                await applyCardFieldFormatIfNeeded(visual, pbiVisualType, rc);
+                                return { ok: true };
+                            } catch {
+                                // keep trying
+                            }
+                        }
+                    }
+
                     // continue with normal fallbacks
                 }
             }
