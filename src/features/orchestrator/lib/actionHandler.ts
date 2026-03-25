@@ -24,6 +24,21 @@ function shouldDebugPbi(): boolean {
     }
 }
 
+async function getSupportedRoleNames(visual: any): Promise<string[]> {
+    if (!visual || typeof visual.getCapabilities !== "function") return [];
+    try {
+        const caps = await visual.getCapabilities();
+        const roles = (caps as any)?.dataRoles;
+        if (!Array.isArray(roles)) return [];
+        const names = roles
+            .map((r: any) => String(r?.name || r?.displayName || "").trim())
+            .filter(Boolean);
+        return Array.from(new Set(names));
+    } catch {
+        return [];
+    }
+}
+
 const PBI_VISUAL_TYPE_MAP: Record<string, string> = {
     barChart: "clusteredBarChart",
     columnChart: "clusteredColumnChart",
@@ -580,7 +595,15 @@ async function addFieldWithRoleFallback(
 
     const isMeasure = normalized.isMeasureField && !isLikelyCategoryRole(roleName);
     const isCardVisual = String(pbiVisualType || "").trim().toLowerCase() === "card";
-    const candidates = getRoleCandidatesForVisual(pbiVisualType, roleName, isMeasure);
+    let candidates = getRoleCandidatesForVisual(pbiVisualType, roleName, isMeasure);
+    // En producción, algunos visuals exponen roles distintos a los esperados (especialmente cards).
+    // Filtramos por capacidades reales para evitar "Invalid or no data role parameter".
+    const supported = await getSupportedRoleNames(visual);
+    if (supported.length) {
+        const supportedSet = new Set(supported.map((s) => s.toLowerCase()));
+        const filtered = candidates.filter((c) => supportedSet.has(String(c).toLowerCase()));
+        if (filtered.length) candidates = filtered;
+    }
     const daxExpression = normalizeDaxExpressionForVisualCalculation(
         String(action?.dax || ""),
         String(action?.dax_name || ""),
@@ -602,13 +625,13 @@ async function addFieldWithRoleFallback(
         mappedAgg: mapAggregationFunction(simpleAggMatch[1]) || "Sum",
         daxExpression,
     } : null;
-    let triedCardMeasureFallback = false;
+    const triedMeasureFallbackRoles = new Set<string>();
     const debugPbi = shouldDebugPbi();
     const attemptErrors: Array<{ role: string; kind: string; message: string }> = [];
 
     for (const roleCandidate of candidates) {
+        let basePayload: any = null;
         try {
-            let basePayload: any;
 
             if (simpleAggInfo) {
                 // DAX simple (SUM/AVG/COUNT) → Column binding con aggregationFunction
@@ -660,16 +683,34 @@ async function addFieldWithRoleFallback(
             await applyCardFieldFormatIfNeeded(visual, pbiVisualType, roleCandidate);
             return { ok: true };
         } catch (err: any) {
+            // Card: algunos tenants/SDKs aceptan "Average" y otros "Avg".
+            // Intentar ambas variantes antes de caer al fallback de measure.
+            if (
+                isCardVisual &&
+                basePayload &&
+                basePayload.$schema === "http://powerbi.com/product/schema#column" &&
+                typeof basePayload.aggregationFunction === "string" &&
+                (basePayload.aggregationFunction === "Average" || basePayload.aggregationFunction === "Avg")
+            ) {
+                const altAgg = basePayload.aggregationFunction === "Average" ? "Avg" : "Average";
+                try {
+                    await visual.addDataField(roleCandidate, { ...basePayload, aggregationFunction: altAgg });
+                    await applyCardFieldFormatIfNeeded(visual, pbiVisualType, roleCandidate);
+                    return { ok: true };
+                } catch {
+                    // continue to existing fallbacks
+                }
+            }
             // Card fallback determinista: si la agregación no es SUM, algunos tenants/SDKs
             // rechazan aggregationFunction="Average" en binding de columna para cards.
             // Reintentamos UNA VEZ como measure inline (DAX simple) sobre el mismo rol.
             if (
-                !triedCardMeasureFallback &&
                 isCardVisual &&
                 simpleAggInfo &&
-                simpleAggInfo.mappedAgg !== "Sum"
+                simpleAggInfo.mappedAgg !== "Sum" &&
+                !triedMeasureFallbackRoles.has(roleCandidate)
             ) {
-                triedCardMeasureFallback = true;
+                triedMeasureFallbackRoles.add(roleCandidate);
                 try {
                     const measurePayload = {
                         $schema: "http://powerbi.com/product/schema#measure",
