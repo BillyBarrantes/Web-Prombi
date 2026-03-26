@@ -425,14 +425,6 @@ export default function ReportArea({ lastAction, actions, lastResult, isSidebarO
                 )}
             </div>
 
-
-            <MeasureAssistantModal
-                open={measureAssistantOpen}
-                detail={measureAssistantDetail}
-                templates={measureTemplates}
-                onClose={() => setMeasureAssistantOpen(false)}
-                onLoadTemplates={loadMeasureTemplates}
-            />
         </div>
     );
 }
