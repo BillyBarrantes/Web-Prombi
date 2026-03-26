@@ -620,14 +620,21 @@ function mapFilterOperator(op: string): string {
     return map[(op || "In").toLowerCase()] || "In";
 }
 
-function buildVisualFilters(action: VisualAction): models.IFilter[] {
+type FilterValue = string | number | boolean;
+
+type FilterValueMapper = (v: FilterValue) => FilterValue;
+
+function buildVisualFiltersWithValueMapper(action: VisualAction, mapper: FilterValueMapper): models.IFilter[] {
     if (!action.filters || action.filters.length === 0) return [];
 
     return action.filters.map((f) => {
         const normalizedOperator = (f.operator || "In").toLowerCase();
-        const rawValues = normalizeFilterValues(
-            f.values && f.values.length > 0 ? f.values : [""]
-        );
+        const rawValues = (f.values && f.values.length > 0 ? f.values : [""]) as Array<FilterValue>;
+        const values = rawValues.map((v) => {
+            const mapped = mapper(v);
+            return typeof mapped === "string" ? mapped.trim() : mapped;
+        });
+
         const target: models.IFilterColumnTarget = {
             table: resolveRealTableName(f.table),
             column: f.column,
@@ -646,7 +653,7 @@ function buildVisualFilters(action: VisualAction): models.IFilter[] {
                                     normalizedOperator === "<" ? "LessThan" :
                                         normalizedOperator === "<=" ? "LessThanOrEqual" :
                                             "NotEquals",
-                        value: rawValues[0],
+                        value: values[0],
                     },
                 ],
                 filterType: 0,
@@ -657,10 +664,20 @@ function buildVisualFilters(action: VisualAction): models.IFilter[] {
             $schema: "http://powerbi.com/product/schema#basic",
             target,
             operator: mapFilterOperator(f.operator),
-            values: rawValues,
+            values,
             filterType: 1,
         } as models.IBasicFilter;
     });
+}
+
+function buildVisualFilters(action: VisualAction): models.IFilter[] {
+    // Default: respetar tipos enviados por backend (no coerción).
+    return buildVisualFiltersWithValueMapper(action, (v) => v);
+}
+
+function buildVisualFiltersStringified(action: VisualAction): models.IFilter[] {
+    // Fallback: coerción a string para columnas tipo texto (ej. códigos "130").
+    return buildVisualFiltersWithValueMapper(action, (v) => String(v));
 }
 
 function getRoleCandidatesForVisual(
@@ -1137,18 +1154,59 @@ async function applyCardDisplayUnitsIfNeeded(visual: any, pbiVisualType: string)
 
 async function applyFiltersWithVariants(targetVisual: any, action: VisualAction): Promise<boolean> {
     if (!action.filters || action.filters.length === 0) return true;
-    const filters = buildVisualFilters(action);
-    if (filters.length === 0) return true;
-    if (!targetVisual || typeof targetVisual.setFilters !== "function") return false;
-    try {
-        if (process.env.NODE_ENV !== "production") {
-            console.debug("Applying visual filters:", filters);
+
+    const debugPbi = shouldDebugPbi();
+
+    const candidates: Array<{ label: string; filters: models.IFilter[] }> = [
+        { label: "raw", filters: buildVisualFilters(action) },
+        { label: "stringified", filters: buildVisualFiltersStringified(action) },
+    ].filter((c) => c.filters.length > 0);
+
+    if (candidates.length === 0) return true;
+    if (!targetVisual) return false;
+
+    const backoffs = [300, 800, 1500];
+
+    for (const candidate of candidates) {
+        for (let attempt = 0; attempt < backoffs.length; attempt++) {
+            try {
+                if (debugPbi) {
+                    console.log(`🧪 applyFilters candidate=${candidate.label} attempt=${attempt + 1}/${backoffs.length}`);
+                    console.log("🧪 filters payload:", candidate.filters);
+                }
+
+                const canUpdate = typeof targetVisual.updateFilters === "function";
+                const canSet = typeof targetVisual.setFilters === "function";
+
+                if (canUpdate) {
+                    // 2 == Replace (ver uso en TopN)
+                    await targetVisual.updateFilters(2, candidate.filters);
+                } else if (canSet) {
+                    await targetVisual.setFilters(candidate.filters);
+                } else {
+                    if (debugPbi) console.warn("⚠️ Visual no soporta setFilters/updateFilters");
+                    return false;
+                }
+
+                // Verify
+                if (typeof targetVisual.getFilters === "function") {
+                    const current = await targetVisual.getFilters();
+                    const ok = Array.isArray(current) && current.length >= candidate.filters.length;
+                    if (debugPbi) console.log(`🧪 getFilters after apply count=${Array.isArray(current) ? current.length : -1} ok=${ok}`);
+                    if (ok) return true;
+                } else {
+                    // No getFilters: asumir éxito si no lanzó.
+                    return true;
+                }
+            } catch (err) {
+                if (debugPbi) console.warn(`⚠️ applyFilters failed candidate=${candidate.label} attempt=${attempt + 1}`, err);
+            }
+
+            await new Promise((r) => setTimeout(r, backoffs[attempt]));
         }
-        await targetVisual.setFilters(filters);
-        return true;
-    } catch {
-        return false;
     }
+
+    return false;
 }
 
 function buildThemePayload(themeKey: string): Record<string, unknown> | null {
