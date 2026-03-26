@@ -95,22 +95,63 @@ export default function ChatSidebar({
             if (!page || typeof page.getVisuals !== "function") throw new Error("no page");
             const visuals = await page.getVisuals();
             const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === targetVisualName) : null;
-            if (!v || typeof v.getDataFields !== "function") throw new Error("no visual");
-            const allFields = await v.getDataFields();
-            let fieldsPresent = false;
-            if (allFields && typeof allFields === "object") {
-                for (const val of Object.values(allFields as Record<string, unknown>)) {
-                    if (Array.isArray(val) && val.length > 0) { fieldsPresent = true; break; }
+            if (!v) throw new Error("no visual");
+
+            let satisfied = false;
+
+            // 1) Best-effort: datafields may lie/return empty after manual drag in some tenants.
+            if (typeof (v as any).getDataFields === "function") {
+                try {
+                    const allFields = await (v as any).getDataFields();
+                    if (allFields && typeof allFields === "object") {
+                        for (const val of Object.values(allFields as Record<string, unknown>)) {
+                            if (Array.isArray(val) && val.length > 0) {
+                                satisfied = true;
+                                break;
+                            }
+                        }
+                    }
+                } catch {
+                    // ignore
                 }
             }
-            console.log(`🧪 Manual verify result visual=${targetVisualName} fieldsPresent=${fieldsPresent}`);
-            if (fieldsPresent) {
-                window.dispatchEvent(new CustomEvent("measure-assistant:chat_success", { detail: { target_visual_name: targetVisualName } }));
+
+            // 2) Authoritative: export summarized data; if it returns body rows, visual has a binding.
+            if (!satisfied && typeof (v as any).exportData === "function") {
+                try {
+                    const pbiClient = await import("powerbi-client");
+                    const exportDataResult = await (v as any).exportData(pbiClient.models.ExportDataType.Summarized);
+                    const csvData = String(exportDataResult?.data || "");
+                    const lines = csvData
+                        .split(/\r?\n/)
+                        .map((l) => l.trim())
+                        .filter(Boolean);
+                    satisfied = lines.length >= 2; // header + at least one data row
+                } catch {
+                    // ignore
+                }
+            }
+
+            console.log(`🧪 Manual verify result visual=${targetVisualName} satisfied=${satisfied}`);
+            if (satisfied) {
+                window.dispatchEvent(
+                    new CustomEvent("measure-assistant:chat_success", {
+                        detail: { target_visual_name: targetVisualName },
+                    })
+                );
             } else {
-                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "Si ya ves el número en la tarjeta, puedes continuar. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
+                setManualVerifyMsg((prev) => ({
+                    ...prev,
+                    [targetVisualName]:
+                        "Si ya ves el número en la tarjeta, puedes continuar. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows).",
+                }));
             }
         } catch {
-            setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "No pude verificar el visual. Si ya ves el número en la tarjeta, puedes continuar. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
+            setManualVerifyMsg((prev) => ({
+                ...prev,
+                [targetVisualName]:
+                    "No pude verificar el visual. Si ya ves el número en la tarjeta, puedes continuar. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows).",
+            }));
         }
     }, []);
 

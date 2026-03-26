@@ -69,6 +69,8 @@ function emitMeasureAssistantChatTimeout(target_visual_name: string): void {
 
 const measureAssistantPolls = new Map<string, number>();
 
+const measureAssistantPollInFlight = new Set<string>();
+
 function startMeasureAssistantPolling(targetVisualName: string): void {
     if (typeof window === "undefined") return;
     const key = String(targetVisualName || "").trim();
@@ -86,6 +88,12 @@ function startMeasureAssistantPolling(targetVisualName: string): void {
     const intervalMs = 900;
 
     const intervalId = window.setInterval(async () => {
+        if (measureAssistantPollInFlight.has(key)) {
+            if (debugPbi) console.log(`🕵️ poll tick visual=${key} inFlight=true`);
+            return;
+        }
+        measureAssistantPollInFlight.add(key);
+
         try {
             if (Date.now() - startedAt > timeoutMs) {
                 const existing = measureAssistantPolls.get(key);
@@ -104,22 +112,43 @@ function startMeasureAssistantPolling(targetVisualName: string): void {
 
             const visuals = await page.getVisuals();
             const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === key) : null;
-            if (!v || typeof v.getDataFields !== "function") return;
+            if (!v) return;
 
-            const allFields = await v.getDataFields();
-            let fieldsPresent = false;
-            if (allFields && typeof allFields === "object") {
-                for (const val of Object.values(allFields as Record<string, unknown>)) {
-                    if (Array.isArray(val) && val.length > 0) {
-                        fieldsPresent = true;
-                        break;
+            let satisfied = false;
+
+            // 1) Best-effort: some tenants lie/return empty here after manual drag.
+            if (typeof v.getDataFields === "function") {
+                try {
+                    const allFields = await v.getDataFields();
+                    if (allFields && typeof allFields === "object") {
+                        for (const val of Object.values(allFields as Record<string, unknown>)) {
+                            if (Array.isArray(val) && val.length > 0) {
+                                satisfied = true
+                                break;
+                            }
+                        }
                     }
+                } catch {
+                    // ignore
                 }
             }
 
-            if (debugPbi) console.log(`🕵️ poll tick visual=${key} fieldsPresent=${fieldsPresent}`);
+            // 2) Authoritative: if the visual can export summarized rows, it has a binding.
+            if (!satisfied && typeof v.exportData === "function") {
+                try {
+                    const pbiClient = await import("powerbi-client");
+                    const exportDataResult = await v.exportData(pbiClient.models.ExportDataType.Summarized);
+                    const csvData = String(exportDataResult?.data || "");
+                    const parsedData = parsePowerBiCsvToJson(csvData);
+                    satisfied = parsedData.length > 0;
+                } catch {
+                    // ignore
+                }
+            }
 
-            if (fieldsPresent) {
+            if (debugPbi) console.log(`🕵️ poll tick visual=${key} satisfied=${satisfied}`);
+
+            if (satisfied) {
                 const existing = measureAssistantPolls.get(key);
                 if (existing) window.clearInterval(existing);
                 measureAssistantPolls.delete(key);
@@ -129,6 +158,8 @@ function startMeasureAssistantPolling(targetVisualName: string): void {
             }
         } catch {
             // ignore transient polling errors
+        } finally {
+            measureAssistantPollInFlight.delete(key);
         }
     }, intervalMs);
 
