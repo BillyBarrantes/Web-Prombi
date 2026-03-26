@@ -12,13 +12,8 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import {
-    sendChatMessage,
-    ApiTimeoutError,
-    ApiRateLimitError,
-    ApiConnectionError,
-} from "../lib/api";
-import { getCanvasVisualContext } from "../lib/pbiRuntime";
+import { sendChatMessage, ApiTimeoutError, ApiRateLimitError, ApiConnectionError } from "../lib/api";
+import { getCanvasVisualContext, getActivePowerBiReport } from "../lib/pbiRuntime";
 import type { ChatMessage, ChatResponse, MeasureAssistantOpenDetail } from "../lib/types";
 import type { ActionResult } from "../lib/actionHandler";
 import ActionCard from "./ActionCard";
@@ -60,6 +55,7 @@ export default function ChatSidebar({
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const loadingTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const [expandedHelp, setExpandedHelp] = useState<Record<string, boolean>>({});
 
     // Auto-scroll al último mensaje
     const scrollToBottom = useCallback(() => {
@@ -87,6 +83,37 @@ export default function ChatSidebar({
 
 
 
+    // ── Manual verify (T5) ───────────────────────────────────
+    const [manualVerifyMsg, setManualVerifyMsg] = useState<Record<string, string>>({});
+
+    const handleManualVerify = useCallback(async (targetVisualName: string) => {
+        console.log(`🧪 Manual verify clicked visual=${targetVisualName}`);
+        try {
+            const report = await getActivePowerBiReport();
+            if (!report || typeof (report as any).getActivePage !== "function") throw new Error("no report");
+            const page = await (report as any).getActivePage();
+            if (!page || typeof page.getVisuals !== "function") throw new Error("no page");
+            const visuals = await page.getVisuals();
+            const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === targetVisualName) : null;
+            if (!v || typeof v.getDataFields !== "function") throw new Error("no visual");
+            const allFields = await v.getDataFields();
+            let fieldsPresent = false;
+            if (allFields && typeof allFields === "object") {
+                for (const val of Object.values(allFields as Record<string, unknown>)) {
+                    if (Array.isArray(val) && val.length > 0) { fieldsPresent = true; break; }
+                }
+            }
+            console.log(`🧪 Manual verify result visual=${targetVisualName} fieldsPresent=${fieldsPresent}`);
+            if (fieldsPresent) {
+                window.dispatchEvent(new CustomEvent("measure-assistant:chat_success", { detail: { target_visual_name: targetVisualName } }));
+            } else {
+                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "Si ya ves el número en la tarjeta, puedes continuar. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
+            }
+        } catch {
+            setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "No pude verificar el visual. Si ya ves el número en la tarjeta, puedes continuar. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
+        }
+    }, []);
+
     // Measure Assistant (Chat) — escucha eventos disparados por actionHandler cuando el SDK bloquea inyección.
     useEffect(() => {
         if (typeof window === "undefined") return;
@@ -101,17 +128,40 @@ export default function ChatSidebar({
             const measureName = String(detail.measure_name || "(medida)");
             const title = String(detail.title || "Tarjeta");
             const dax = String(detail.dax || "");
+            const reasonCode = String(detail.reason_code || "");
+            const table = String(detail.table || "");
+            const column = String(detail.column || "");
 
             setMessages((prev) => {
-                // Evitar duplicados por reintentos
-                if (prev.some((m) => m.id === msgId)) return prev;
+                // T7: Si ya existe burbuja para este visual, actualizar en lugar de duplicar.
+                const existingIdx = prev.findIndex((m) => m.id === msgId);
+                if (existingIdx !== -1) {
+                    console.log(`♻️ MeasureAssistant bubble reused visual=${visualKey}`);
+                    const updated = [...prev];
+                    updated[existingIdx] = {
+                        ...updated[existingIdx],
+                        content: `He preparado la tarjeta "${title}". Por restricciones del SDK, necesito que arrastres la medida "${measureName}" hacia la tarjeta.`,
+                        measure_assistant: {
+                            status: "pending",
+                            measure_name: measureName,
+                            dax,
+                            title,
+                            target_visual_name: visualKey || undefined,
+                            reason_code: reasonCode || undefined,
+                            table: table || undefined,
+                            column: column || undefined,
+                        },
+                    };
+                    return updated;
+                }
+
+                console.log(`💬 MeasureAssistant bubble created for visual=${visualKey}`);
                 return [
                     ...prev,
                     {
                         id: msgId,
                         role: "assistant",
-                        content:
-                            `He preparado la tarjeta "${title}". Por restricciones del sistema, necesito que arrastres la medida "${measureName}" hacia la tarjeta vacía.`,
+                        content: `He preparado la tarjeta "${title}". Por restricciones del SDK, necesito que arrastres la medida "${measureName}" hacia la tarjeta.`,
                         timestamp: new Date(),
                         measure_assistant: {
                             status: "pending",
@@ -119,6 +169,9 @@ export default function ChatSidebar({
                             dax,
                             title,
                             target_visual_name: visualKey || undefined,
+                            reason_code: reasonCode || undefined,
+                            table: table || undefined,
+                            column: column || undefined,
                         },
                     } as any,
                 ];
@@ -129,6 +182,8 @@ export default function ChatSidebar({
             const visualKey = String((ev as any)?.detail?.target_visual_name || "").trim();
             if (!visualKey) return;
             const msgId = `measure-assistant-${visualKey}`;
+            console.log(`💬 MeasureAssistant success message appended visual=${visualKey}`);
+            console.log(`💬 MeasureAssistant bubble status=success visual=${visualKey}`);
 
             setMessages((prev) => {
                 const next = prev.map((m) => {
@@ -136,7 +191,7 @@ export default function ChatSidebar({
                     if (!m.measure_assistant) return m;
                     return {
                         ...m,
-                        measure_assistant: { ...m.measure_assistant, status: "success" },
+                        measure_assistant: { ...m.measure_assistant, status: "success" as const },
                     };
                 });
                 return [
@@ -144,23 +199,26 @@ export default function ChatSidebar({
                     {
                         id: `measure-assistant-ok-${Date.now()}`,
                         role: "assistant",
-                        content: "¡Excelente! Dato detectado y tarjeta actualizada.",
+                        content: "¡Listo! Detecté la medida en la tarjeta. 🎉",
                         timestamp: new Date(),
                     },
                 ];
             });
+            // Limpiar mensaje de verify manual si había
+            setManualVerifyMsg(prev => { const n = { ...prev }; delete n[visualKey]; return n; });
         };
 
         const onTimeout = (ev: any) => {
             const visualKey = String((ev as any)?.detail?.target_visual_name || "").trim();
             if (!visualKey) return;
             const msgId = `measure-assistant-${visualKey}`;
+            console.log(`💬 MeasureAssistant bubble status=timeout visual=${visualKey}`);
 
             setMessages((prev) =>
                 prev.map((m) => {
                     if (m.id !== msgId) return m;
                     if (!m.measure_assistant) return m;
-                    return { ...m, measure_assistant: { ...m.measure_assistant, status: "timeout" } };
+                    return { ...m, measure_assistant: { ...m.measure_assistant, status: "timeout" as const } };
                 })
             );
         };
@@ -394,36 +452,107 @@ export default function ChatSidebar({
                                             {msg.content}
                                         </p>
 
-                                        {msg.measure_assistant && (
-                                            <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
-                                                <div className="text-xs text-[var(--color-text-secondary)]">
-                                                    {msg.measure_assistant.status === "pending" && "Arrastra la medida a la tarjeta vacía. Cuando la detecte, te aviso aquí."}
-                                                    {msg.measure_assistant.status === "success" && "Medida detectada. Listo."}
-                                                    {msg.measure_assistant.status === "timeout" && "Aún no detecto la medida. Si ya la asignaste, intenta refrescar el reporte y vuelve a intentar."}
+                                        {msg.measure_assistant && (() => {
+                                            const ma = msg.measure_assistant;
+                                            const visualKey = ma.target_visual_name || "";
+                                            const isHelp = expandedHelp[visualKey] || false;
+                                            const verifyFallback = manualVerifyMsg[visualKey];
+
+                                            return (
+                                                <div className={`mt-3 rounded-xl border p-3 ${
+                                                    ma.status === "success"
+                                                        ? "border-green-500/30 bg-green-900/10"
+                                                        : ma.status === "timeout"
+                                                            ? "border-yellow-500/30 bg-yellow-900/10"
+                                                            : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
+                                                }`}>
+                                                    {/* ── Bloque 1: Qué pasó ── */}
+                                                    <p className="text-xs font-semibold text-[var(--color-text-primary)] mb-2">
+                                                        {ma.status === "success" && "✅ Medida detectada en la tarjeta."}
+                                                        {ma.status === "timeout" && "⏳ No se detectó la medida después de 2 minutos."}
+                                                        {ma.status === "pending" && `⚠️ La agregación "${ma.measure_name || "medida"}" no puede inyectarse automáticamente en esta tarjeta.`}
+                                                    </p>
+
+                                                    {/* ── Bloque 2: Qué hacer ahora (solo pending/timeout) ── */}
+                                                    {(ma.status === "pending" || ma.status === "timeout") && (
+                                                        <div className="text-xs text-[var(--color-text-secondary)] space-y-1 mb-2">
+                                                            <p className="font-medium">Qué hacer ahora:</p>
+                                                            <ol className="list-decimal list-inside space-y-0.5">
+                                                                <li>Busca <strong>"{ma.measure_name}"</strong> en el panel de Datos (derecha)</li>
+                                                                <li>Arrastra esa medida a la tarjeta vacía en el lienzo</li>
+                                                                <li>Cuando la detecte, te confirmo aquí automáticamente</li>
+                                                            </ol>
+                                                            {ma.status === "timeout" && (
+                                                                <p className="mt-1 text-yellow-400">
+                                                                    Si ya la asignaste, recarga con <strong>Cmd+Shift+R</strong> (Mac) / <strong>Ctrl+Shift+R</strong> (Windows).
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    {/* ── DAX ── */}
+                                                    {ma.dax && (
+                                                        <pre className="whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] text-[var(--color-text-primary)] mb-2">
+                                                            {ma.dax}
+                                                        </pre>
+                                                    )}
+
+                                                    {/* ── Botones (solo pending/timeout) ── */}
+                                                    {(ma.status === "pending" || ma.status === "timeout") && (
+                                                        <div className="flex flex-wrap gap-2 mb-2">
+                                                            {ma.dax && (
+                                                                <button
+                                                                    onClick={async () => {
+                                                                        try { await navigator.clipboard.writeText(ma.dax || ""); } catch { /* ignore */ }
+                                                                    }}
+                                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
+                                                                >
+                                                                    📋 Copiar DAX
+                                                                </button>
+                                                            )}
+                                                            {visualKey && (
+                                                                <button
+                                                                    onClick={() => handleManualVerify(visualKey)}
+                                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
+                                                                >
+                                                                    ✅ Listo, ya la arrastré
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                onClick={() => setExpandedHelp(prev => ({ ...prev, [visualKey]: !prev[visualKey] }))}
+                                                                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-accent)] cursor-pointer"
+                                                            >
+                                                                ❓ ¿Dónde la encuentro?
+                                                            </button>
+                                                        </div>
+                                                    )}
+
+                                                    {/* ── Verify fallback message (T5) ── */}
+                                                    {verifyFallback && (
+                                                        <p className="text-xs text-yellow-400 mb-2">{verifyFallback}</p>
+                                                    )}
+
+                                                    {/* ── Bloque 3: Expand — si NO existe la medida (T2/T8) ── */}
+                                                    {isHelp && (
+                                                        <div className="text-xs text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-2 mt-1 space-y-1">
+                                                            <p className="font-medium text-[var(--color-text-secondary)]">Si la medida NO existe en el modelo:</p>
+                                                            <ol className="list-decimal list-inside space-y-0.5">
+                                                                <li>Abre Power BI Desktop</li>
+                                                                <li>Ve a <strong>Modelado → Nueva medida</strong></li>
+                                                                <li>Pega el DAX (usa el botón "Copiar DAX" arriba)</li>
+                                                                <li>Guarda y publica el reporte</li>
+                                                            </ol>
+                                                            <p className="mt-1">En el panel de Datos (derecha del lienzo), busca el ícono de calculadora 🔢 junto a tu tabla. Ahí verás la medida recién creada.</p>
+                                                        </div>
+                                                    )}
+
+                                                    {/* ── Success collapsed ── */}
+                                                    {ma.status === "success" && (
+                                                        <p className="text-xs text-green-400">Completado — la medida ya está en la tarjeta.</p>
+                                                    )}
                                                 </div>
-
-                                                {msg.measure_assistant.dax && (
-                                                    <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] text-[var(--color-text-primary)]">
-                                                        {msg.measure_assistant.dax}
-                                                    </pre>
-                                                )}
-
-                                                {msg.measure_assistant.dax && (
-                                                    <button
-                                                        onClick={async () => {
-                                                            try {
-                                                                await navigator.clipboard.writeText(msg.measure_assistant?.dax || "");
-                                                            } catch {
-                                                                // ignore
-                                                            }
-                                                        }}
-                                                        className="mt-2 inline-flex items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white hover:opacity-90"
-                                                    >
-                                                        📋 Copiar DAX
-                                                    </button>
-                                                )}
-                                            </div>
-                                        )}
+                                            );
+                                        })()}
 
                                         {/* Phase 4: Retry button for failed messages */}
                                         {msg.isError && msg.failedMessage && (

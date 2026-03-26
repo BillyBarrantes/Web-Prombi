@@ -83,6 +83,9 @@ export interface MeasureAssistantChatBubble {
     dax?: string;
     title?: string;
     target_visual_name?: string;
+    reason_code?: string;
+    table?: string;
+    column?: string;
 }
 
 export interface ChatMessage {
@@ -198,5 +201,8 @@ export interface MeasureAssistantOpenDetail {
     measure_name?: string;
     title?: string;
     reason?: string;
+    reason_code?: string;
+    table?: string;
+    column?: string;
     retry_action?: VisualAction;
 }

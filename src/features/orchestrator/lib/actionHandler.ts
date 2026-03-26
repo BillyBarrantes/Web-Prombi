@@ -26,7 +26,14 @@ function shouldDebugPbi(): boolean {
 
 function emitMeasureAssistantOpen(detail: MeasureAssistantOpenDetail): void {
     if (typeof window === "undefined") return;
+    // T1: No emitir sin target — no hay visual al que anclar la burbuja.
+    if (!detail.target_visual_name) return;
     try {
+        const debugPbi = shouldDebugPbi();
+        if (debugPbi) {
+            console.log(`🧱 HardWall: ${detail.reason_code || "UNKNOWN"} → emitting measure-assistant:chat_open`);
+            console.log("🧱 HardWall payload:", detail);
+        }
         window.dispatchEvent(new CustomEvent("measure-assistant:chat_open", { detail }));
     } catch {
         // ignore
@@ -66,7 +73,13 @@ function startMeasureAssistantPolling(targetVisualName: string): void {
     if (typeof window === "undefined") return;
     const key = String(targetVisualName || "").trim();
     if (!key) return;
-    if (measureAssistantPolls.has(key)) return;
+    const debugPbi = shouldDebugPbi();
+    if (measureAssistantPolls.has(key)) {
+        if (debugPbi) console.log(`♻️ Polling already active; skip start visual=${key}`);
+        return;
+    }
+
+    if (debugPbi) console.log(`🕵️ MeasureAssistant polling start visual=${key}`);
 
     const startedAt = Date.now();
     const timeoutMs = 2 * 60 * 1000;
@@ -78,6 +91,7 @@ function startMeasureAssistantPolling(targetVisualName: string): void {
                 const existing = measureAssistantPolls.get(key);
                 if (existing) window.clearInterval(existing);
                 measureAssistantPolls.delete(key);
+                if (debugPbi) console.log(`⏳ MeasureAssistant polling timeout visual=${key} → chat_timeout`);
                 emitMeasureAssistantChatTimeout(key);
                 return;
             }
@@ -93,16 +107,25 @@ function startMeasureAssistantPolling(targetVisualName: string): void {
             if (!v || typeof v.getDataFields !== "function") return;
 
             const allFields = await v.getDataFields();
+            let fieldsPresent = false;
             if (allFields && typeof allFields === "object") {
                 for (const val of Object.values(allFields as Record<string, unknown>)) {
                     if (Array.isArray(val) && val.length > 0) {
-                        const existing = measureAssistantPolls.get(key);
-                        if (existing) window.clearInterval(existing);
-                        measureAssistantPolls.delete(key);
-                        emitMeasureAssistantChatSuccess(key);
-                        return;
+                        fieldsPresent = true;
+                        break;
                     }
                 }
+            }
+
+            if (debugPbi) console.log(`🕵️ poll tick visual=${key} fieldsPresent=${fieldsPresent}`);
+
+            if (fieldsPresent) {
+                const existing = measureAssistantPolls.get(key);
+                if (existing) window.clearInterval(existing);
+                measureAssistantPolls.delete(key);
+                if (debugPbi) console.log(`✅ MeasureAssistant detected binding visual=${key} → chat_success`);
+                emitMeasureAssistantChatSuccess(key);
+                return;
             }
         } catch {
             // ignore transient polling errors
@@ -913,9 +936,9 @@ async function addFieldWithRoleFallback(
                 // degradar a Count (no-dedup) para evitar tarjetas vacías.
                 // Nota: el backend/UI debe indicar esta degradación si el usuario pidió "únicos".
                 if (String(basePayload.aggregationFunction).toLowerCase() === "distinctcount") {
-                    // DistinctCount en cards está bloqueado en algunos tenants/SDKs.
-                    // Regla de producto: NO mostrar un KPI incorrecto (Count) ni intentar inyección automática.
-                    // En su lugar: abrir Asistente y pedir al usuario arrastrar la medida al visual.
+                    // T6: DistinctCount en cards — NUNCA crear un KPI alternativo (Count).
+                    // Solo crear tarjeta contenedor vacía + asistente en chat.
+                    if (debugPbi) console.log("🧱 HardWall distinctcount: no fallback KPI will be created (deterministic UX)");
 
                     const measureName = (daxName || `${String(basePayload.column || "Campo")} únicos`).trim();
                     const daxExpr = `DISTINCTCOUNT('${basePayload.table}'[${basePayload.column}])`;
@@ -929,7 +952,10 @@ async function addFieldWithRoleFallback(
                         measure_name: measureName,
                         title: desiredTitle || undefined,
                         target_visual_name: targetVisualName || undefined,
-                        reason: "Este KPI requiere una medida en el modelo. Créala y luego arrástrala a la tarjeta. Después presiona Verificar.",
+                        reason: "Este KPI requiere una medida en el modelo. Créala y luego arrástrala a la tarjeta.",
+                        reason_code: "CARD_DISTINCTCOUNT_BLOCKED",
+                        table: basePayload.table,
+                        column: basePayload.column,
                     });
 
                     startMeasureAssistantPolling(targetVisualName);
