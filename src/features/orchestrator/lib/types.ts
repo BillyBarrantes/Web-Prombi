@@ -77,6 +77,14 @@ export interface VisualAction {
 
 // ── Messages ─────────────────────────────────────────────────
 
+export interface MeasureAssistantChatBubble {
+    status: "pending" | "success" | "timeout";
+    measure_name?: string;
+    dax?: string;
+    title?: string;
+    target_visual_name?: string;
+}
+
 export interface ChatMessage {
     id: string;
     role: "user" | "assistant";
@@ -88,6 +96,7 @@ export interface ChatMessage {
     isLoading?: boolean;
     isError?: boolean;
     failedMessage?: string;
+    measure_assistant?: MeasureAssistantChatBubble;
 }
 
 export interface Conversation {

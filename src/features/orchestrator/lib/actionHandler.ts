@@ -27,10 +27,89 @@ function shouldDebugPbi(): boolean {
 function emitMeasureAssistantOpen(detail: MeasureAssistantOpenDetail): void {
     if (typeof window === "undefined") return;
     try {
-        window.dispatchEvent(new CustomEvent("measure-assistant:open", { detail }));
+        window.dispatchEvent(new CustomEvent("measure-assistant:chat_open", { detail }));
     } catch {
         // ignore
     }
+}
+
+
+function emitMeasureAssistantChatSuccess(target_visual_name: string): void {
+    if (typeof window === "undefined") return;
+    try {
+        window.dispatchEvent(
+            new CustomEvent("measure-assistant:chat_success", {
+                detail: { target_visual_name },
+            })
+        );
+    } catch {
+        // ignore
+    }
+}
+
+function emitMeasureAssistantChatTimeout(target_visual_name: string): void {
+    if (typeof window === "undefined") return;
+    try {
+        window.dispatchEvent(
+            new CustomEvent("measure-assistant:chat_timeout", {
+                detail: { target_visual_name },
+            })
+        );
+    } catch {
+        // ignore
+    }
+}
+
+const measureAssistantPolls = new Map<string, number>();
+
+function startMeasureAssistantPolling(targetVisualName: string): void {
+    if (typeof window === "undefined") return;
+    const key = String(targetVisualName || "").trim();
+    if (!key) return;
+    if (measureAssistantPolls.has(key)) return;
+
+    const startedAt = Date.now();
+    const timeoutMs = 2 * 60 * 1000;
+    const intervalMs = 900;
+
+    const intervalId = window.setInterval(async () => {
+        try {
+            if (Date.now() - startedAt > timeoutMs) {
+                const existing = measureAssistantPolls.get(key);
+                if (existing) window.clearInterval(existing);
+                measureAssistantPolls.delete(key);
+                emitMeasureAssistantChatTimeout(key);
+                return;
+            }
+
+            const report = await getActivePowerBiReport();
+            if (!report || typeof (report as any).getActivePage !== "function") return;
+
+            const page = await (report as any).getActivePage();
+            if (!page || typeof page.getVisuals !== "function") return;
+
+            const visuals = await page.getVisuals();
+            const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === key) : null;
+            if (!v || typeof v.getDataFields !== "function") return;
+
+            const allFields = await v.getDataFields();
+            if (allFields && typeof allFields === "object") {
+                for (const val of Object.values(allFields as Record<string, unknown>)) {
+                    if (Array.isArray(val) && val.length > 0) {
+                        const existing = measureAssistantPolls.get(key);
+                        if (existing) window.clearInterval(existing);
+                        measureAssistantPolls.delete(key);
+                        emitMeasureAssistantChatSuccess(key);
+                        return;
+                    }
+                }
+            }
+        } catch {
+            // ignore transient polling errors
+        }
+    }, intervalMs);
+
+    measureAssistantPolls.set(key, intervalId);
 }
 async function getSupportedRoleNames(visual: any): Promise<string[]> {
     if (!visual || typeof visual.getCapabilities !== "function") return [];
@@ -852,6 +931,8 @@ async function addFieldWithRoleFallback(
                         target_visual_name: targetVisualName || undefined,
                         reason: "Este KPI requiere una medida en el modelo. Créala y luego arrástrala a la tarjeta. Después presiona Verificar.",
                     });
+
+                    startMeasureAssistantPolling(targetVisualName);
 
                     return { ok: true };
                 }

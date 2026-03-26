@@ -19,7 +19,7 @@ import {
     ApiConnectionError,
 } from "../lib/api";
 import { getCanvasVisualContext } from "../lib/pbiRuntime";
-import type { ChatMessage, ChatResponse } from "../lib/types";
+import type { ChatMessage, ChatResponse, MeasureAssistantOpenDetail } from "../lib/types";
 import type { ActionResult } from "../lib/actionHandler";
 import ActionCard from "./ActionCard";
 
@@ -85,6 +85,95 @@ export default function ChatSidebar({
         }
     }, [currentConversationId, messages.length]);
 
+
+
+    // Measure Assistant (Chat) — escucha eventos disparados por actionHandler cuando el SDK bloquea inyección.
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+
+        const onOpen = (ev: any) => {
+            const detail = (ev as any)?.detail as MeasureAssistantOpenDetail | undefined;
+            if (!detail) return;
+
+            const visualKey = String(detail.target_visual_name || "").trim();
+            const msgId = visualKey ? `measure-assistant-${visualKey}` : `measure-assistant-${Date.now()}`;
+
+            const measureName = String(detail.measure_name || "(medida)");
+            const title = String(detail.title || "Tarjeta");
+            const dax = String(detail.dax || "");
+
+            setMessages((prev) => {
+                // Evitar duplicados por reintentos
+                if (prev.some((m) => m.id === msgId)) return prev;
+                return [
+                    ...prev,
+                    {
+                        id: msgId,
+                        role: "assistant",
+                        content:
+                            `He preparado la tarjeta "${title}". Por restricciones del sistema, necesito que arrastres la medida "${measureName}" hacia la tarjeta vacía.`,
+                        timestamp: new Date(),
+                        measure_assistant: {
+                            status: "pending",
+                            measure_name: measureName,
+                            dax,
+                            title,
+                            target_visual_name: visualKey || undefined,
+                        },
+                    } as any,
+                ];
+            });
+        };
+
+        const onSuccess = (ev: any) => {
+            const visualKey = String((ev as any)?.detail?.target_visual_name || "").trim();
+            if (!visualKey) return;
+            const msgId = `measure-assistant-${visualKey}`;
+
+            setMessages((prev) => {
+                const next = prev.map((m) => {
+                    if (m.id !== msgId) return m;
+                    if (!m.measure_assistant) return m;
+                    return {
+                        ...m,
+                        measure_assistant: { ...m.measure_assistant, status: "success" },
+                    };
+                });
+                return [
+                    ...next,
+                    {
+                        id: `measure-assistant-ok-${Date.now()}`,
+                        role: "assistant",
+                        content: "¡Excelente! Dato detectado y tarjeta actualizada.",
+                        timestamp: new Date(),
+                    },
+                ];
+            });
+        };
+
+        const onTimeout = (ev: any) => {
+            const visualKey = String((ev as any)?.detail?.target_visual_name || "").trim();
+            if (!visualKey) return;
+            const msgId = `measure-assistant-${visualKey}`;
+
+            setMessages((prev) =>
+                prev.map((m) => {
+                    if (m.id !== msgId) return m;
+                    if (!m.measure_assistant) return m;
+                    return { ...m, measure_assistant: { ...m.measure_assistant, status: "timeout" } };
+                })
+            );
+        };
+
+        window.addEventListener("measure-assistant:chat_open", onOpen as any);
+        window.addEventListener("measure-assistant:chat_success", onSuccess as any);
+        window.addEventListener("measure-assistant:chat_timeout", onTimeout as any);
+        return () => {
+            window.removeEventListener("measure-assistant:chat_open", onOpen as any);
+            window.removeEventListener("measure-assistant:chat_success", onSuccess as any);
+            window.removeEventListener("measure-assistant:chat_timeout", onTimeout as any);
+        };
+    }, []);
     // Cleanup loading timer
     useEffect(() => {
         return () => {
@@ -304,6 +393,37 @@ export default function ChatSidebar({
                                             }`}>
                                             {msg.content}
                                         </p>
+
+                                        {msg.measure_assistant && (
+                                            <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
+                                                <div className="text-xs text-[var(--color-text-secondary)]">
+                                                    {msg.measure_assistant.status === "pending" && "Arrastra la medida a la tarjeta vacía. Cuando la detecte, te aviso aquí."}
+                                                    {msg.measure_assistant.status === "success" && "Medida detectada. Listo."}
+                                                    {msg.measure_assistant.status === "timeout" && "Aún no detecto la medida. Si ya la asignaste, intenta refrescar el reporte y vuelve a intentar."}
+                                                </div>
+
+                                                {msg.measure_assistant.dax && (
+                                                    <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] text-[var(--color-text-primary)]">
+                                                        {msg.measure_assistant.dax}
+                                                    </pre>
+                                                )}
+
+                                                {msg.measure_assistant.dax && (
+                                                    <button
+                                                        onClick={async () => {
+                                                            try {
+                                                                await navigator.clipboard.writeText(msg.measure_assistant?.dax || "");
+                                                            } catch {
+                                                                // ignore
+                                                            }
+                                                        }}
+                                                        className="mt-2 inline-flex items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white hover:opacity-90"
+                                                    >
+                                                        📋 Copiar DAX
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
 
                                         {/* Phase 4: Retry button for failed messages */}
                                         {msg.isError && msg.failedMessage && (
