@@ -123,7 +123,7 @@ function startMeasureAssistantPolling(targetVisualName: string): void {
                     if (allFields && typeof allFields === "object") {
                         for (const val of Object.values(allFields as Record<string, unknown>)) {
                             if (Array.isArray(val) && val.length > 0) {
-                                satisfied = true
+                                satisfied = true;
                                 break;
                             }
                         }
