@@ -232,7 +232,7 @@ export default function ChatSidebar({
                 ? `¡La medida "${measureName}" ya existe! Arrástrala a la tarjeta.`
                 : `Arrastra la medida "${measureName}" a la tarjeta. Cuando la detecte, te confirmo automáticamente.`;
 
-            // Update bubble with potentially new visual name
+            // Update bubble with potentially new visual name and start polling
             const newMsgId = currentVisualName !== targetVisualName ? `measure-assistant-${currentVisualName}` : msgId;
             setMessages(prev => prev.map(m => {
                 if (m.id !== msgId || !m.measure_assistant) return m;
@@ -248,6 +248,10 @@ export default function ChatSidebar({
                     },
                 };
             }));
+
+            // Magic auto-detection: start polling now that we are WAITING_FOR_DRAG
+            window.dispatchEvent(new CustomEvent("measure-assistant:start_polling", { detail: { target_visual_name: currentVisualName } }));
+
         } catch {
             // On error → go to WAITING_FOR_DRAG anyway
             setMessages(prev => prev.map(m => {
@@ -290,19 +294,24 @@ export default function ChatSidebar({
 
             // Determine initial wizard state from probe
             const stateMap: Record<string, MeasureAssistantStatus> = {
-                FOUND: "MEASURE_EXISTS",
+                FOUND: "WAITING_FOR_DRAG", // Start in WAITING_FOR_DRAG immediately if FOUND
                 NOT_FOUND: "MEASURE_MISSING",
                 INCONCLUSIVE: "MEASURE_INCONCLUSIVE",
             };
             const initialStatus: MeasureAssistantStatus = stateMap[probeStatus] || "MEASURE_INCONCLUSIVE";
             const contentMap: Record<string, string> = {
-                MEASURE_EXISTS: `Necesito que arrastres la medida "${measureName}" a la tarjeta "${title}".`,
+                WAITING_FOR_DRAG: `La medida "${measureName}" ya existe en tu modelo. Arrástrala desde el panel Datos a la tarjeta vacía "${title}".`,
                 MEASURE_MISSING: `Primero hay que crear la medida "${measureName}" en Power BI Desktop.`,
                 MEASURE_INCONCLUSIVE: `No puedo confirmar automáticamente si la medida "${measureName}" existe. Búscala en el panel Datos.`,
             };
             const initialContent = contentMap[initialStatus] || contentMap.MEASURE_INCONCLUSIVE;
 
             console.log(`💬 MeasureAssistant wizard: state=${initialStatus} probe_status=${probeStatus} visual=${visualKey}`);
+
+            // Start polling IMMEDIATELY only if measure is FOUND (waiting for drag)
+            if (initialStatus === "WAITING_FOR_DRAG" && visualKey) {
+                window.dispatchEvent(new CustomEvent("measure-assistant:start_polling", { detail: { target_visual_name: visualKey } }));
+            }
 
             setMessages((prev) => {
                 const existingIdx = prev.findIndex((m) => m.id === msgId);
@@ -713,6 +722,13 @@ export default function ChatSidebar({
                                                         </>
                                                     )}
 
+                                                    {/* ── WAITING_FOR_DRAG ── */}
+                                                    {st === "WAITING_FOR_DRAG" && (
+                                                        <>
+                                                            <p className="text-[10px] text-[var(--color-text-muted)] mb-2 animate-pulse">🔎 Detectando cambios automáticamente…</p>
+                                                        </>
+                                                    )}
+
                                                     {/* ── MEASURE_INCONCLUSIVE ── */}
                                                     {st === "MEASURE_INCONCLUSIVE" && (
                                                         <>
@@ -788,7 +804,7 @@ export default function ChatSidebar({
                                                             )}
 
                                                             {/* "Listo, ya la arrastré" — measure exists or waiting */}
-                                                            {(st === "MEASURE_EXISTS" || st === "WAITING_FOR_DRAG" || st === "MEASURE_INCONCLUSIVE") && visualKey && (
+                                                            {(st === "WAITING_FOR_DRAG" || st === "MEASURE_INCONCLUSIVE") && visualKey && (
                                                                 <button
                                                                     onClick={() => handleManualVerify(visualKey)}
                                                                     className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
@@ -814,7 +830,7 @@ export default function ChatSidebar({
                                                             )}
 
                                                             {/* "No pude" */}
-                                                            {(st === "MEASURE_EXISTS" || st === "MEASURE_MISSING" || st === "MEASURE_INCONCLUSIVE" || st === "WAITING_FOR_DRAG") && (
+                                                            {(st === "MEASURE_MISSING" || st === "MEASURE_INCONCLUSIVE" || st === "WAITING_FOR_DRAG") && (
                                                                 <button
                                                                     onClick={() => handleTroubleshoot(visualKey)}
                                                                     className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-accent)] cursor-pointer"
