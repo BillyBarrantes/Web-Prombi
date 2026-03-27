@@ -1088,8 +1088,9 @@ async function addFieldWithRoleFallback(
                         probe_status: probeResult.status,
                     });
 
-                    // Poll if measure FOUND or INCONCLUSIVE (user might drag existing)
-                    if (probeResult.status === "FOUND" || probeResult.status === "INCONCLUSIVE") {
+                    // Poll ONLY if measure confirmed FOUND (user just needs to drag)
+                    // INCONCLUSIVE/NOT_FOUND: polling starts only when user clicks "ya la arrastré"
+                    if (probeResult.status === "FOUND") {
                         startMeasureAssistantPolling(targetVisualName);
                     }
 

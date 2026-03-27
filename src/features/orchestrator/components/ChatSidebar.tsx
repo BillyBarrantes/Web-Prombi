@@ -13,7 +13,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { sendChatMessage, ApiTimeoutError, ApiRateLimitError, ApiConnectionError, ApiServerError } from "../lib/api";
-import { getCanvasVisualContext, getActivePowerBiReport } from "../lib/pbiRuntime";
+import { getCanvasVisualContext, getActivePowerBiReport, refreshPowerBiEmbed } from "../lib/pbiRuntime";
 import type { ChatMessage, ChatResponse, MeasureAssistantOpenDetail, MeasureAssistantStatus, ProbeStatus } from "../lib/types";
 import type { ActionResult } from "../lib/actionHandler";
 import { probeMeasureExists } from "../lib/actionHandler";
@@ -57,6 +57,7 @@ export default function ChatSidebar({
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const loadingTimerRef = useRef<NodeJS.Timeout | null>(null);
     const [expandedHelp, setExpandedHelp] = useState<Record<string, boolean>>({});
+    const [refreshingVisual, setRefreshingVisual] = useState<string | null>(null);
 
     // Auto-scroll al último mensaje
     const scrollToBottom = useCallback(() => {
@@ -125,100 +126,87 @@ export default function ChatSidebar({
             if (satisfied) {
                 window.dispatchEvent(new CustomEvent("measure-assistant:chat_success", { detail: { target_visual_name: targetVisualName } }));
             } else {
-                setManualVerifyMsg((prev) => ({ ...prev, [targetVisualName]: "Si ya ves el número en la tarjeta, puedes continuar. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
+                // Start polling — this is the ONLY place we start polling after user action
+                window.dispatchEvent(new CustomEvent("measure-assistant:start_polling", { detail: { target_visual_name: targetVisualName } }));
+                setManualVerifyMsg((prev) => ({ ...prev, [targetVisualName]: "Aún no veo datos en la tarjeta. Verificando automáticamente… cuando aparezca, te confirmo." }));
             }
         } catch {
-            setManualVerifyMsg((prev) => ({ ...prev, [targetVisualName]: "No pude verificar. Si ya ves el número, continúa. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
+            setManualVerifyMsg((prev) => ({ ...prev, [targetVisualName]: "No pude verificar ahora. Si ya ves el número en la tarjeta, continúa." }));
         }
     }, []);
 
-    // ── Refresh embedded PBI report (iframe only, NOT full page reload) ──
+    // ── Refresh embedded PBI report (reload → re-embed, NOT report.refresh) ──
     const handleRefreshPBI = useCallback(async (targetVisualName: string) => {
         console.log(`🔄 Actualizar Power BI clicked visual=${targetVisualName}`);
+        setRefreshingVisual(targetVisualName);
+        setManualVerifyMsg(prev => { const n = { ...prev }; delete n[targetVisualName]; return n; });
         try {
-            const report = await getActivePowerBiReport();
-            if (report && typeof report.refresh === "function") {
-                await report.refresh();
-                console.log(`🔄 report.refresh() OK`);
-                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "Listo. Ahora presiona \"Ya la creé\" de nuevo o arrastra la medida si ya aparece." }));
-            } else if (report && typeof report.reload === "function") {
-                await report.reload();
-                console.log(`🔄 report.reload() OK (fallback)`);
-                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "Listo. Ahora presiona \"Ya la creé\" de nuevo o arrastra la medida si ya aparece." }));
+            const result = await refreshPowerBiEmbed();
+            console.log(`🔄 refreshPowerBiEmbed result: ok=${result.ok} method=${result.method}`);
+            if (result.ok) {
+                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: `Reporte recargado (${result.method}). Si la medida ya existe, arrástrala a la tarjeta. Si la acabas de crear, presiona "Ya la creé".` }));
             } else {
-                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "No se pudo refrescar automáticamente. Recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
+                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "No pude recargar el reporte. Intenta cerrar y abrir la página como último recurso." }));
             }
         } catch (err) {
             console.warn(`🔄 Refresh error:`, err);
-            setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "Error al refrescar. Recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
+            setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "Error al recargar. Intenta cerrar y abrir la página como último recurso." }));
+        } finally {
+            setRefreshingVisual(null);
         }
     }, []);
 
-    // ── Reprobe: "Ya la creé" button (NEVER gets stuck) ──────────
+    // ── Reprobe: "Ya la creé" button (refreshes embed, probes, → WAITING_FOR_DRAG, NO auto-polling) ──
     const handleReprobe = useCallback(async (targetVisualName: string) => {
         console.log(`🔍 Reprobe clicked visual=${targetVisualName}`);
         const msgId = `measure-assistant-${targetVisualName}`;
         const bubbleMsg = messages.find(m => m.id === msgId);
         const measureName = bubbleMsg?.measure_assistant?.measure_name || "";
 
+        setRefreshingVisual(targetVisualName);
+        setManualVerifyMsg(prev => { const n = { ...prev }; delete n[targetVisualName]; return n; });
+
         try {
-            // Step 1: Refresh PBI embed first
-            const report = await getActivePowerBiReport();
-            if (report && typeof report.refresh === "function") {
-                try { await report.refresh(); console.log(`🔄 Reprobe: refreshed embed`); } catch { /* best-effort */ }
+            // Step 1: Refresh PBI embed (reload → re-embed)
+            const refreshResult = await refreshPowerBiEmbed();
+            console.log(`🔄 Reprobe refresh: ok=${refreshResult.ok} method=${refreshResult.method}`);
+
+            // Step 2: Re-probe (best-effort)
+            const report = getActivePowerBiReport();
+            let probeStatusLabel = "INCONCLUSIVE";
+
+            if (report && typeof (report as any).getActivePage === "function") {
+                try {
+                    const page = await (report as any).getActivePage();
+                    const visuals = page ? await page.getVisuals() : [];
+                    const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === targetVisualName) : null;
+                    if (v) {
+                        const tableName = bubbleMsg?.measure_assistant?.table || "";
+                        const probeResult = await probeMeasureExists(v, tableName, measureName);
+                        probeStatusLabel = probeResult.status;
+                        console.log(`🔍 Reprobe result: status=${probeResult.status}`);
+                    }
+                } catch { /* probe best-effort */ }
             }
 
-            // Step 2: Re-probe
-            if (!report || typeof (report as any).getActivePage !== "function") {
-                // Can't probe — go to WAITING_FOR_DRAG anyway
-                setMessages(prev => prev.map(m => {
-                    if (m.id !== msgId || !m.measure_assistant) return m;
-                    return { ...m, content: `Arrastra la medida "${measureName}" a la tarjeta.`, measure_assistant: { ...m.measure_assistant, status: "WAITING_FOR_DRAG" as MeasureAssistantStatus, probe_status: "INCONCLUSIVE" as ProbeStatus } };
-                }));
-                window.dispatchEvent(new CustomEvent("measure-assistant:start_polling", { detail: { target_visual_name: targetVisualName } }));
-                return;
-            }
+            // Step 3: Transition to WAITING_FOR_DRAG regardless of probe result
+            // Polling will only start when user clicks "Listo, ya la arrastré"
+            const contentMsg = probeStatusLabel === "FOUND"
+                ? `¡La medida "${measureName}" ya existe! Arrástrala a la tarjeta.`
+                : `Arrastra la medida "${measureName}" a la tarjeta. Cuando la detecte, te confirmo automáticamente.`;
 
-            const page = await (report as any).getActivePage();
-            const visuals = page ? await page.getVisuals() : [];
-            const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === targetVisualName) : null;
-
-            if (v) {
-                const tableName = bubbleMsg?.measure_assistant?.table || "";
-                const probeResult = await probeMeasureExists(v, tableName, measureName);
-                console.log(`🔍 Reprobe result: status=${probeResult.status}`);
-
-                if (probeResult.status === "FOUND") {
-                    setMessages(prev => prev.map(m => {
-                        if (m.id !== msgId || !m.measure_assistant) return m;
-                        return { ...m, content: `¡La medida "${measureName}" ya existe! Arrástrala a la tarjeta.`, measure_assistant: { ...m.measure_assistant, status: "MEASURE_EXISTS" as MeasureAssistantStatus, probe_status: "FOUND" as ProbeStatus } };
-                    }));
-                } else {
-                    // INCONCLUSIVE or NOT_FOUND → go to WAITING_FOR_DRAG anyway
-                    // (exportData polling will be the final judge)
-                    setMessages(prev => prev.map(m => {
-                        if (m.id !== msgId || !m.measure_assistant) return m;
-                        return { ...m, content: `Arrastra la medida "${measureName}" a la tarjeta. El sistema verificará automáticamente.`, measure_assistant: { ...m.measure_assistant, status: "WAITING_FOR_DRAG" as MeasureAssistantStatus, probe_status: probeResult.status as ProbeStatus } };
-                    }));
-                }
-            } else {
-                // Visual not found — still go to WAITING_FOR_DRAG
-                setMessages(prev => prev.map(m => {
-                    if (m.id !== msgId || !m.measure_assistant) return m;
-                    return { ...m, content: `Arrastra la medida "${measureName}" a la tarjeta.`, measure_assistant: { ...m.measure_assistant, status: "WAITING_FOR_DRAG" as MeasureAssistantStatus } };
-                }));
-            }
-
-            // Always start polling — exportData is the source of truth
-            window.dispatchEvent(new CustomEvent("measure-assistant:start_polling", { detail: { target_visual_name: targetVisualName } }));
-            setManualVerifyMsg(prev => { const n = { ...prev }; delete n[targetVisualName]; return n; });
+            setMessages(prev => prev.map(m => {
+                if (m.id !== msgId || !m.measure_assistant) return m;
+                return { ...m, content: contentMsg, measure_assistant: { ...m.measure_assistant, status: "WAITING_FOR_DRAG" as MeasureAssistantStatus, probe_status: probeStatusLabel as ProbeStatus } };
+            }));
         } catch {
-            // On error → go to WAITING_FOR_DRAG anyway, don't get stuck
+            // On error → go to WAITING_FOR_DRAG anyway
             setMessages(prev => prev.map(m => {
                 if (m.id !== msgId || !m.measure_assistant) return m;
                 return { ...m, content: `Arrastra la medida "${measureName}" a la tarjeta.`, measure_assistant: { ...m.measure_assistant, status: "WAITING_FOR_DRAG" as MeasureAssistantStatus } };
             }));
-            window.dispatchEvent(new CustomEvent("measure-assistant:start_polling", { detail: { target_visual_name: targetVisualName } }));
+        } finally {
+            setRefreshingVisual(null);
         }
     }, [messages]);
 
@@ -682,14 +670,13 @@ export default function ChatSidebar({
                                                                 🔍 No puedo confirmar automáticamente si la medida existe
                                                             </p>
                                                             <div className="text-xs text-[var(--color-text-secondary)] space-y-1 mb-2">
-                                                                <p>El SDK no permite verificar esta medida directamente en la tarjeta.</p>
+                                                                <p>El SDK no permite verificar esta medida directamente con la tarjeta.</p>
                                                                 <ol className="list-decimal list-inside space-y-0.5">
                                                                     <li>En el panel <strong>Datos</strong> (derecha), busca <strong>"{ma.measure_name}"</strong> (ícono de calculadora 🔢).</li>
-                                                                    <li><strong>Si está</strong>: arrástrala a la tarjeta vacía.</li>
-                                                                    <li><strong>Si NO está</strong>: créala en Desktop con el DAX de abajo, publica, y presiona <strong>"Actualizar Power BI"</strong>.</li>
+                                                                    <li><strong>Si la ves</strong>: arrástrala a la tarjeta vacía y presiona <strong>"Listo, ya la arrastré"</strong>.</li>
+                                                                    <li><strong>Si NO la ves</strong>: créala en Desktop con el DAX de abajo, publica, y presiona <strong>"Actualizar Power BI"</strong>.</li>
                                                                 </ol>
                                                             </div>
-                                                            <p className="text-[10px] text-[var(--color-text-muted)] mb-2 animate-pulse">🔎 Detectando cambios automáticamente…</p>
                                                         </>
                                                     )}
 
@@ -697,27 +684,25 @@ export default function ChatSidebar({
                                                     {st === "MEASURE_MISSING" && (
                                                         <>
                                                             <p className="text-xs font-semibold text-[var(--color-text-primary)] mb-2">
-                                                                🛠️ Primero hay que crear una medida (Power BI Desktop)
+                                                                🛠️ Crear medida en Power BI Desktop (Windows)
                                                             </p>
                                                             <div className="text-xs text-[var(--color-text-secondary)] space-y-1 mb-2">
-                                                                <p>Esto requiere crear una medida en el modelo.</p>
-                                                                <ol className="list-decimal list-inside space-y-0.5">
-                                                                    <li>En <strong>Power BI Desktop</strong> (Windows): pestaña <strong>Modelado → Nueva medida</strong>.</li>
-                                                                    <li>Pega esto y guarda:</li>
+                                                                <ol className="list-decimal list-inside space-y-1">
+                                                                    <li>Abre <strong>Power BI Desktop</strong> (Windows).</li>
+                                                                    <li>En el panel <strong>Campos</strong> (derecha), selecciona la tabla <strong>"{ma.table || 'tu tabla'}"</strong>.</li>
+                                                                    <li>Arriba, ve a <strong>Modelado → Nueva medida</strong>.</li>
+                                                                    <li>Haz clic en <strong>"📋 Copiar DAX"</strong> aquí abajo y pégalo en la barra de fórmula.</li>
+                                                                    <li>Presiona <strong>Enter</strong> para guardar la medida.</li>
+                                                                    <li>Ve a <strong>Archivo → Publicar</strong> (al mismo <strong>Workspace</strong> donde está el reporte que usas en PromtBI).</li>
+                                                                    <li>Vuelve a PromtBI y presiona <strong>"🔄 Actualizar Power BI"</strong> aquí abajo.</li>
+                                                                    <li>Cuando veas la medida (ícono calculadora 🔢 en Datos), arrástrala a la tarjeta vacía y presiona <strong>"Listo, ya la arrastré"</strong>.</li>
                                                                 </ol>
                                                             </div>
                                                             {fullDaxCopy && (
                                                                 <pre className="whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] text-[var(--color-text-primary)] mb-2">{fullDaxCopy}</pre>
                                                             )}
-                                                            <div className="text-xs text-[var(--color-text-secondary)] space-y-1 mb-2">
-                                                                <ol className="list-decimal list-inside space-y-0.5" start={3}>
-                                                                    <li>Publica/guarda el reporte.</li>
-                                                                    <li>Vuelve a PromtBI y presiona <strong>"Actualizar Power BI"</strong>.</li>
-                                                                    <li>Arrastra la medida (ícono calculadora 🔢) a la tarjeta vacía.</li>
-                                                                </ol>
-                                                            </div>
                                                             <p className="text-[10px] text-[var(--color-text-muted)] mb-2">
-                                                                ℹ️ En Power BI Web normalmente no se pueden crear medidas sin permisos de edición del dataset. Si estás solo en Web, abre el reporte en Desktop o pide permisos.
+                                                                ℹ️ En Power BI Web normalmente no puedes crear medidas si no tienes permisos para editar el dataset. Si estás solo en Web, abre el reporte en Desktop o pide permisos.
                                                             </p>
                                                         </>
                                                     )}
@@ -760,20 +745,22 @@ export default function ChatSidebar({
                                                                 >✅ Listo, ya la arrastré</button>
                                                             )}
 
-                                                            {/* "Ya la creé" — missing or inconclusive */}
+                                                            {/* "Ya la creé" — missing or inconclusive (shows spinner) */}
                                                             {(st === "MEASURE_MISSING" || st === "MEASURE_INCONCLUSIVE") && visualKey && (
                                                                 <button
                                                                     onClick={() => handleReprobe(visualKey)}
-                                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
-                                                                >✅ Ya la creé</button>
+                                                                    disabled={refreshingVisual === visualKey}
+                                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                >{refreshingVisual === visualKey ? (<><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Verificando…</>) : "✅ Ya la creé"}</button>
                                                             )}
 
-                                                            {/* "Actualizar Power BI" — missing, inconclusive, troubleshoot */}
+                                                            {/* "Actualizar Power BI" — missing, inconclusive, troubleshoot (shows spinner) */}
                                                             {(st === "MEASURE_MISSING" || st === "MEASURE_INCONCLUSIVE" || st === "TROUBLESHOOT") && visualKey && (
                                                                 <button
                                                                     onClick={() => handleRefreshPBI(visualKey)}
-                                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
-                                                                >🔄 Actualizar Power BI</button>
+                                                                    disabled={refreshingVisual === visualKey}
+                                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                >{refreshingVisual === visualKey ? (<><span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Actualizando…</>) : "🔄 Actualizar Power BI"}</button>
                                                             )}
 
                                                             {/* "No pude" */}
