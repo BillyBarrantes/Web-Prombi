@@ -88,6 +88,10 @@ export default function ChatSidebar({
     // ── Manual verify (T5) ───────────────────────────────────
     const [manualVerifyMsg, setManualVerifyMsg] = useState<Record<string, string>>({});
 
+    // Measure Assistant SUCCESS Dedupe & Polling Guards
+    const successEmitted = useRef<Set<string>>(new Set());
+    const pollingIntervals = useRef<Map<string, number>>(new Map());
+
     const handleManualVerify = useCallback(async (targetVisualName: string) => {
         console.log(`🧪 Manual verify clicked visual=${targetVisualName}`);
         try {
@@ -124,7 +128,16 @@ export default function ChatSidebar({
 
             console.log(`🧪 Manual verify result visual=${targetVisualName} satisfied=${satisfied}`);
             if (satisfied) {
-                window.dispatchEvent(new CustomEvent("measure-assistant:chat_success", { detail: { target_visual_name: targetVisualName } }));
+                // Extract measureName from messages to dispatch complete success event
+                let resolvedMeasureName = "";
+                setMessages((prev) => {
+                    const m = prev.find(x => x.id === `measure-assistant-${targetVisualName}`);
+                    if (m?.measure_assistant?.measure_name) resolvedMeasureName = m.measure_assistant.measure_name;
+                    return prev;
+                });
+                window.dispatchEvent(new CustomEvent("measure-assistant:chat_success", { 
+                    detail: { target_visual_name: targetVisualName, measure_name: resolvedMeasureName } 
+                }));
             } else {
                 // Start polling — this is the ONLY place we start polling after user action
                 window.dispatchEvent(new CustomEvent("measure-assistant:start_polling", { detail: { target_visual_name: targetVisualName } }));
@@ -140,6 +153,8 @@ export default function ChatSidebar({
         console.log(`🔄 Actualizar Power BI clicked visual=${targetVisualName}`);
         setRefreshingVisual(targetVisualName);
         setManualVerifyMsg(prev => { const n = { ...prev }; delete n[targetVisualName]; return n; });
+        // Reset guards on visual refresh
+        successEmitted.current.forEach(k => { if (k.startsWith(targetVisualName + '_')) successEmitted.current.delete(k); });
         const msgId = `measure-assistant-${targetVisualName}`;
         try {
             const result = await refreshPowerBiEmbed();
@@ -191,6 +206,8 @@ export default function ChatSidebar({
 
         setRefreshingVisual(targetVisualName);
         setManualVerifyMsg(prev => { const n = { ...prev }; delete n[targetVisualName]; return n; });
+        // Reset guards on reprobe
+        successEmitted.current.forEach(k => { if (k.startsWith(targetVisualName + '_')) successEmitted.current.delete(k); });
 
         let currentVisualName = targetVisualName;
 
@@ -341,8 +358,38 @@ export default function ChatSidebar({
 
         const onSuccess = (ev: any) => {
             const visualKey = String((ev as any)?.detail?.target_visual_name || "").trim();
+            const payloadMeasureName = String((ev as any)?.detail?.measure_name || "").trim();
             if (!visualKey) return;
+
+            // Extract measureName from bubble if not in event
             const msgId = `measure-assistant-${visualKey}`;
+            let measureName = payloadMeasureName;
+            if (!measureName) {
+                setMessages(prev => {
+                    const m = prev.find(x => x.id === msgId);
+                    if (m?.measure_assistant?.measure_name) measureName = m.measure_assistant.measure_name;
+                    return prev;
+                });
+            }
+
+            const idempotencyKey = `${visualKey}_${measureName || 'unknown'}`;
+
+            // Idempotent guard: exactly-once SUCCESS per visual+measure instance
+            if (successEmitted.current.has(idempotencyKey)) {
+                console.log(`♻️ MeasureAssistant: ignoring duplicate SUCCESS for key=${idempotencyKey}`);
+                return;
+            }
+            successEmitted.current.add(idempotencyKey);
+
+            // Clean up any active polling immediately
+            const activeInterval = pollingIntervals.current.get(visualKey);
+            if (activeInterval !== undefined) {
+                window.clearInterval(activeInterval);
+                pollingIntervals.current.delete(visualKey);
+                console.log(`🛑 Polling stopped for visual=${visualKey} (SUCCESS)`);
+            }
+
+            // Wait to update UI State
             console.log(`💬 MeasureAssistant wizard: state=SUCCESS visual=${visualKey}`);
 
             setMessages((prev) => {
@@ -358,6 +405,15 @@ export default function ChatSidebar({
         const onTimeout = (ev: any) => {
             const visualKey = String((ev as any)?.detail?.target_visual_name || "").trim();
             if (!visualKey) return;
+
+            // Clean up any active polling on timeout
+            const activeInterval = pollingIntervals.current.get(visualKey);
+            if (activeInterval !== undefined) {
+                window.clearInterval(activeInterval);
+                pollingIntervals.current.delete(visualKey);
+                console.log(`🛑 Polling stopped for visual=${visualKey} (TIMEOUT)`);
+            }
+
             const msgId = `measure-assistant-${visualKey}`;
             console.log(`💬 MeasureAssistant wizard: state=TROUBLESHOOT (timeout) visual=${visualKey}`);
 
@@ -380,6 +436,7 @@ export default function ChatSidebar({
                 try {
                     if (Date.now() - startedAt > timeoutMs) {
                         window.clearInterval(intervalId);
+                        pollingIntervals.current.delete(visualKey);
                         window.dispatchEvent(new CustomEvent("measure-assistant:chat_timeout", { detail: { target_visual_name: visualKey } }));
                         return;
                     }
@@ -412,10 +469,25 @@ export default function ChatSidebar({
                     }
                     if (satisfied) {
                         window.clearInterval(intervalId);
-                        window.dispatchEvent(new CustomEvent("measure-assistant:chat_success", { detail: { target_visual_name: visualKey } }));
+                        // Clean up ref on success dispatch
+                        pollingIntervals.current.delete(visualKey);
+                        
+                        // Extract measureName from messages to dispatch complete success event
+                        let measureName = "";
+                        setMessages((prev) => {
+                            const m = prev.find(x => x.id === `measure-assistant-${visualKey}`);
+                            if (m?.measure_assistant?.measure_name) measureName = m.measure_assistant.measure_name;
+                            return prev;
+                        });
+                        
+                        window.dispatchEvent(new CustomEvent("measure-assistant:chat_success", { 
+                            detail: { target_visual_name: visualKey, measure_name: measureName } 
+                        }));
                     }
                 } catch { /* ignore */ }
             }, intervalMs);
+
+            pollingIntervals.current.set(visualKey, intervalId);
         };
 
         window.addEventListener("measure-assistant:chat_open", onOpen as any);
@@ -427,6 +499,10 @@ export default function ChatSidebar({
             window.removeEventListener("measure-assistant:chat_success", onSuccess as any);
             window.removeEventListener("measure-assistant:chat_timeout", onTimeout as any);
             window.removeEventListener("measure-assistant:start_polling", onStartPolling as any);
+
+            // Clean up all active intervals when component unmounts
+            pollingIntervals.current.forEach(id => window.clearInterval(id));
+            pollingIntervals.current.clear();
         };
     }, []);
     // Cleanup loading timer
@@ -725,6 +801,21 @@ export default function ChatSidebar({
                                                     {/* ── WAITING_FOR_DRAG ── */}
                                                     {st === "WAITING_FOR_DRAG" && (
                                                         <>
+                                                            {ma.reason_code === "DISTINCTCOUNT_IN_CARD_BLOCKED" && (
+                                                                <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+                                                                    Power BI Web no permite colocar conteos únicos directamente en tarjetas, por lo que creamos la tarjeta vacía.
+                                                                </p>
+                                                            )}
+                                                            {ma.reason_code === "PERCENT_OF_TOTAL_BLOCKED" && (
+                                                                <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+                                                                    Power BI Web no permite crear porcentajes del total directamente en tarjetas sin una medida.
+                                                                </p>
+                                                            )}
+                                                            {ma.reason_code === "RANK_BLOCKED" && (
+                                                                <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+                                                                    No es posible incrustar el ranking directamente en la tarjeta sin una medida explícita.
+                                                                </p>
+                                                            )}
                                                             <p className="text-[10px] text-[var(--color-text-muted)] mb-2 animate-pulse">🔎 Detectando cambios automáticamente…</p>
                                                         </>
                                                     )}
@@ -739,7 +830,7 @@ export default function ChatSidebar({
                                                                 <p>El SDK no permite verificar esta medida directamente con la tarjeta.</p>
                                                                 <ol className="list-decimal list-inside space-y-0.5">
                                                                     <li>En el panel <strong>Datos</strong> (derecha), busca <strong>"{ma.measure_name}"</strong> (ícono de calculadora 🔢).</li>
-                                                                    <li><strong>Si la ves</strong>: arrástrala a la tarjeta vacía y presiona <strong>"Listo, ya la arrastré"</strong>.</li>
+                                                                    <li><strong>Si la ves</strong>: arrástrala a la tarjeta vacía. Se detectará automáticamente.</li>
                                                                     <li><strong>Si NO la ves</strong>: créala en Desktop con el DAX de abajo, publica, y presiona <strong>"Actualizar Power BI"</strong>.</li>
                                                                 </ol>
                                                             </div>
@@ -761,7 +852,7 @@ export default function ChatSidebar({
                                                                     <li>Presiona <strong>Enter</strong> para guardar la medida.</li>
                                                                     <li>Ve a <strong>Archivo → Publicar</strong> (al mismo <strong>Workspace</strong> donde está el reporte que usas en PromtBI).</li>
                                                                     <li>Vuelve a PromtBI y presiona <strong>"🔄 Actualizar Power BI"</strong> aquí abajo.</li>
-                                                                    <li>Cuando veas la medida (ícono calculadora 🔢 en Datos), arrástrala a la tarjeta vacía y presiona <strong>"Listo, ya la arrastré"</strong>.</li>
+                                                                    <li>Cuando veas la medida (ícono calculadora 🔢 en Datos), arrástrala a la tarjeta vacía.</li>
                                                                 </ol>
                                                             </div>
                                                             {fullDaxCopy && (
