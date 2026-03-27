@@ -73,6 +73,15 @@ export interface VisualAction {
     query_type?: string | null;
     payload?: Record<string, any> | null;
     top_n?: TopNConfig | null;
+    requirements?: {
+        needs_measure: boolean;
+        operation: string;
+        measure_template_id?: string;
+        suggested_measure_name: string;
+        table: string;
+        column: string;
+        dax_suggestion: string;
+    };
 }
 
 // ── Messages ─────────────────────────────────────────────────

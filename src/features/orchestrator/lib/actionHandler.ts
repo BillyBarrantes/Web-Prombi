@@ -2221,6 +2221,58 @@ async function handleCreateVisual(
             }
         }
 
+        // ── PREEMPTIVE MEASURE ASSISTANT INTERCEPT ──
+        // If backend explicitly says we need a measure (e.g. DistinctCount on a Card),
+        // we skip the data-binding loop completely to avoid the SDK throwing an error.
+        // We just create the placeholder card and open the wizard immediately.
+        if (action.requirements?.needs_measure && pbiVisualType === "card") {
+            const req = action.requirements;
+            const debugPbi = shouldDebugPbi();
+            if (debugPbi) console.log("🧱 Preemptive Measure Intercept: skipping data-binding to avoid SDK error");
+
+            // Capture placeholder layout
+            let placeholderSpec: PlaceholderSpec | undefined;
+            try {
+                const vLayout = (targetVisual as any)?.layout || (targetVisual as any)?.config?.layout;
+                if (vLayout && typeof vLayout.x === "number") {
+                    placeholderSpec = {
+                        visual_type: "card",
+                        layout: { x: vLayout.x, y: vLayout.y, width: vLayout.width, height: vLayout.height },
+                        title: action.title || `Total de ${req.column} únicos`,
+                    };
+                } else {
+                    placeholderSpec = {
+                        visual_type: "card",
+                        layout: { x: layout.x || 20, y: layout.y || 20, width: layout.width || 300, height: layout.height || 200 },
+                        title: action.title || `Total de ${req.column} únicos`,
+                    };
+                }
+            } catch { /* best effort */ }
+
+            // Probe deterministically
+            const probeResult = await probeMeasureExists(targetVisual, req.table, req.suggested_measure_name);
+
+            // Open Wizard using data from the requirement
+            emitMeasureAssistantOpen({
+                template_id: req.measure_template_id || "distinct_count",
+                vars: { table: req.table, column: req.column },
+                measure_name: req.suggested_measure_name,
+                dax: req.dax_suggestion,
+                title: action.title || `Total de ${req.column} únicos`,
+                target_visual_name: String(targetVisual?.name || "").trim(),
+                reason_code: req.operation, // e.g., "DISTINCTCOUNT_IN_CARD_BLOCKED"
+                probe_status: probeResult.status,
+                placeholder_spec: placeholderSpec
+            });
+
+            return {
+                success: true,
+                message: `Asistente de medidas abierto para ${req.suggested_measure_name}`,
+                operation: action.operation,
+                appliedToReport: false,
+            };
+        }
+
         // FASE 15-FIX: Inyección de roles resiliente — si un rol falla,
         // loguear advertencia y continuar con los demás roles.
         // Esto evita que un campo inválido impida renderizar el visual
