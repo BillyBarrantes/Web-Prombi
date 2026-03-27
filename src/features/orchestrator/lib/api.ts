@@ -65,7 +65,7 @@ async function apiFetch<T>(
     options: RequestInit = {},
     timeoutMs: number = DEFAULT_TIMEOUT_MS
 ): Promise<T> {
-    const url = `${API_BASE}${endpoint}`;
+    const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
 
     // Phase 4: AbortController for timeout
     const controller = new AbortController();
@@ -168,10 +168,20 @@ export async function sendChatMessage(
 ): Promise<ChatResponse> {
     const debugPbi = shouldDebugPbi();
     try {
-        const response = await apiFetch<ChatResponse>("/api/v1/chat", {
+        // Bypass Vercel Proxy para evitar timeouts de 120s en prompts complejos (Rank, % de Total)
+        const CHAT_API_BASE = import.meta.env.NEXT_PUBLIC_API_BASE_URL 
+                           || import.meta.env.VITE_API_URL 
+                           || import.meta.env.VITE_API_BASE_URL 
+                           || "https://api-power-bi-226858146865.us-central1.run.app";
+        const chatUrl = `${CHAT_API_BASE.replace(/\/+$/, "")}/api/v1/chat`;
+        
+        const customTimeoutStr = import.meta.env.NEXT_PUBLIC_CHAT_TIMEOUT_MS || import.meta.env.VITE_CHAT_TIMEOUT_MS;
+        const chatTimeoutMs = customTimeoutStr ? parseInt(customTimeoutStr as string, 10) : 240000;
+
+        const response = await apiFetch<ChatResponse>(chatUrl, {
             method: "POST",
             body: JSON.stringify(request),
-        });
+        }, chatTimeoutMs);
         if (debugPbi) {
             console.log("📡 ChatResponse:", {
                 operation: response.action?.operation,
