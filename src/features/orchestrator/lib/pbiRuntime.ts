@@ -137,15 +137,18 @@ async function fetchEmbedConfig(): Promise<any> {
  * Refresh the Power BI embed so new measures/model changes appear.
  * Step A: report.reload() — forces SDK to re-fetch model metadata.
  * Step B (fallback): re-embed with fresh config (new token + full reload).
+ * On 2nd+ consecutive reload, skips Step A and goes directly to re-embed.
  */
+let _reloadCount = 0;
 export async function refreshPowerBiEmbed(): Promise<{ ok: boolean; method: string }> {
     const debug = shouldDebugPbi();
+    _reloadCount++;
 
-    // Step A: Try report.reload()
+    // Step A: Try report.reload() (only on first attempt)
     const report = getActivePowerBiReport();
-    if (report && typeof report.reload === "function") {
+    if (_reloadCount <= 1 && report && typeof report.reload === "function") {
         try {
-            if (debug) console.log("🔄 embedReload start: report.reload()");
+            if (debug) console.log(`🔄 embedReload start: report.reload() (attempt #${_reloadCount})`);
             await report.reload();
             // Wait for report to stabilize
             await new Promise(resolve => setTimeout(resolve, 1500));
@@ -163,6 +166,8 @@ export async function refreshPowerBiEmbed(): Promise<{ ok: boolean; method: stri
         } catch (err) {
             if (debug) console.warn("⚠️ report.reload failed:", err);
         }
+    } else if (_reloadCount > 1 && debug) {
+        console.log(`🔁 Skipping reload (attempt #${_reloadCount}), going directly to re-embed`);
     }
 
     // Step B: Re-embed with fresh config
@@ -210,6 +215,7 @@ export async function refreshPowerBiEmbed(): Promise<{ ok: boolean; method: stri
         });
 
         if (debug) console.log("✅ re-embed OK — fresh embed with new token");
+        _reloadCount = 0; // Reset so next session tries reload first
         return { ok: true, method: "re-embed" };
     } catch (err) {
         if (debug) console.warn("❌ re-embed failed:", err);

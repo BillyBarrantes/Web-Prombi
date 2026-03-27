@@ -14,9 +14,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { sendChatMessage, ApiTimeoutError, ApiRateLimitError, ApiConnectionError, ApiServerError } from "../lib/api";
 import { getCanvasVisualContext, getActivePowerBiReport, refreshPowerBiEmbed } from "../lib/pbiRuntime";
-import type { ChatMessage, ChatResponse, MeasureAssistantOpenDetail, MeasureAssistantStatus, ProbeStatus } from "../lib/types";
+import type { ChatMessage, ChatResponse, MeasureAssistantOpenDetail, MeasureAssistantStatus, ProbeStatus, PlaceholderSpec } from "../lib/types";
 import type { ActionResult } from "../lib/actionHandler";
-import { probeMeasureExists } from "../lib/actionHandler";
+import { probeMeasureExists, replayPlaceholderCard } from "../lib/actionHandler";
 import ActionCard from "./ActionCard";
 
 interface ChatSidebarProps {
@@ -140,11 +140,37 @@ export default function ChatSidebar({
         console.log(`🔄 Actualizar Power BI clicked visual=${targetVisualName}`);
         setRefreshingVisual(targetVisualName);
         setManualVerifyMsg(prev => { const n = { ...prev }; delete n[targetVisualName]; return n; });
+        const msgId = `measure-assistant-${targetVisualName}`;
         try {
             const result = await refreshPowerBiEmbed();
             console.log(`🔄 refreshPowerBiEmbed result: ok=${result.ok} method=${result.method}`);
+
+            // Replay placeholder card after reload
+            let replayMsg = "";
+            const bubbleMsg = messages.find(m => m.id === msgId);
+            const spec = bubbleMsg?.measure_assistant?.placeholder_spec;
+            if (spec && result.ok) {
+                const replay = await replayPlaceholderCard(spec);
+                if (replay.ok) {
+                    replayMsg = " La tarjeta vacía fue recreada automáticamente.";
+                    // Update visual name in bubble if changed
+                    if (replay.newVisualName && replay.newVisualName !== targetVisualName) {
+                        setMessages(prev => prev.map(m => {
+                            if (m.id !== msgId || !m.measure_assistant) return m;
+                            return {
+                                ...m,
+                                id: `measure-assistant-${replay.newVisualName}`,
+                                measure_assistant: { ...m.measure_assistant, target_visual_name: replay.newVisualName! },
+                            };
+                        }));
+                    }
+                } else {
+                    replayMsg = " No pude recrear la tarjeta automáticamente; puede que necesites crearla de nuevo desde el chat.";
+                }
+            }
+
             if (result.ok) {
-                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: `Reporte recargado (${result.method}). Si la medida ya existe, arrástrala a la tarjeta. Si la acabas de crear, presiona "Ya la creé".` }));
+                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: `Reporte recargado (${result.method}).${replayMsg} Asegúrate de haber publicado al mismo Workspace que usas en PromtBI.` }));
             } else {
                 setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "No pude recargar el reporte. Intenta cerrar y abrir la página como último recurso." }));
             }
@@ -154,9 +180,9 @@ export default function ChatSidebar({
         } finally {
             setRefreshingVisual(null);
         }
-    }, []);
+    }, [messages]);
 
-    // ── Reprobe: "Ya la creé" button (refreshes embed, probes, → WAITING_FOR_DRAG, NO auto-polling) ──
+    // ── Reprobe: "Ya la creé" button (refreshes embed, replays placeholder, probes, → WAITING_FOR_DRAG, NO auto-polling) ──
     const handleReprobe = useCallback(async (targetVisualName: string) => {
         console.log(`🔍 Reprobe clicked visual=${targetVisualName}`);
         const msgId = `measure-assistant-${targetVisualName}`;
@@ -166,12 +192,24 @@ export default function ChatSidebar({
         setRefreshingVisual(targetVisualName);
         setManualVerifyMsg(prev => { const n = { ...prev }; delete n[targetVisualName]; return n; });
 
+        let currentVisualName = targetVisualName;
+
         try {
             // Step 1: Refresh PBI embed (reload → re-embed)
             const refreshResult = await refreshPowerBiEmbed();
             console.log(`🔄 Reprobe refresh: ok=${refreshResult.ok} method=${refreshResult.method}`);
 
-            // Step 2: Re-probe (best-effort)
+            // Step 2: Replay placeholder card
+            const spec = bubbleMsg?.measure_assistant?.placeholder_spec;
+            if (spec && refreshResult.ok) {
+                const replay = await replayPlaceholderCard(spec);
+                if (replay.ok && replay.newVisualName) {
+                    currentVisualName = replay.newVisualName;
+                    console.log(`🔁 Reprobe: placeholder replayed, new visualName=${currentVisualName}`);
+                }
+            }
+
+            // Step 3: Re-probe (best-effort) using the new visual name
             const report = getActivePowerBiReport();
             let probeStatusLabel = "INCONCLUSIVE";
 
@@ -179,7 +217,7 @@ export default function ChatSidebar({
                 try {
                     const page = await (report as any).getActivePage();
                     const visuals = page ? await page.getVisuals() : [];
-                    const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === targetVisualName) : null;
+                    const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === currentVisualName) : null;
                     if (v) {
                         const tableName = bubbleMsg?.measure_assistant?.table || "";
                         const probeResult = await probeMeasureExists(v, tableName, measureName);
@@ -189,15 +227,26 @@ export default function ChatSidebar({
                 } catch { /* probe best-effort */ }
             }
 
-            // Step 3: Transition to WAITING_FOR_DRAG regardless of probe result
-            // Polling will only start when user clicks "Listo, ya la arrastré"
+            // Step 4: Transition to WAITING_FOR_DRAG regardless of probe result
             const contentMsg = probeStatusLabel === "FOUND"
                 ? `¡La medida "${measureName}" ya existe! Arrástrala a la tarjeta.`
                 : `Arrastra la medida "${measureName}" a la tarjeta. Cuando la detecte, te confirmo automáticamente.`;
 
+            // Update bubble with potentially new visual name
+            const newMsgId = currentVisualName !== targetVisualName ? `measure-assistant-${currentVisualName}` : msgId;
             setMessages(prev => prev.map(m => {
                 if (m.id !== msgId || !m.measure_assistant) return m;
-                return { ...m, content: contentMsg, measure_assistant: { ...m.measure_assistant, status: "WAITING_FOR_DRAG" as MeasureAssistantStatus, probe_status: probeStatusLabel as ProbeStatus } };
+                return {
+                    ...m,
+                    id: newMsgId,
+                    content: contentMsg,
+                    measure_assistant: {
+                        ...m.measure_assistant,
+                        status: "WAITING_FOR_DRAG" as MeasureAssistantStatus,
+                        probe_status: probeStatusLabel as ProbeStatus,
+                        target_visual_name: currentVisualName,
+                    },
+                };
             }));
         } catch {
             // On error → go to WAITING_FOR_DRAG anyway
@@ -267,6 +316,7 @@ export default function ChatSidebar({
                     table: table || undefined,
                     column: column || undefined,
                     probe_status: probeStatus,
+                    placeholder_spec: detail.placeholder_spec || undefined,
                 };
 
                 if (existingIdx !== -1) {

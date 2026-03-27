@@ -94,6 +94,12 @@ export interface ProbeResult {
     source: string;
 }
 
+export interface PlaceholderSpec {
+    visual_type: string; // e.g. "card"
+    layout: { x: number; y: number; width: number; height: number };
+    title: string;
+}
+
 export interface MeasureAssistantChatBubble {
     status: MeasureAssistantStatus;
     measure_name?: string;
@@ -104,6 +110,7 @@ export interface MeasureAssistantChatBubble {
     table?: string;
     column?: string;
     probe_status?: ProbeStatus;
+    placeholder_spec?: PlaceholderSpec;
 }
 
 export interface ChatMessage {
@@ -224,4 +231,5 @@ export interface MeasureAssistantOpenDetail {
     column?: string;
     probe_status?: ProbeStatus;
     retry_action?: VisualAction;
+    placeholder_spec?: PlaceholderSpec;
 }

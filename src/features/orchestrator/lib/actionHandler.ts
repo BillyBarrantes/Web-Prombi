@@ -2,7 +2,7 @@
  * Action Handler — Bridges AI-generated VisualAction JSON with Power BI JS SDK.
  */
 
-import type { ChatResponse, VisualAction, MeasureAssistantOpenDetail, ProbeResult } from "./types";
+import type { ChatResponse, VisualAction, MeasureAssistantOpenDetail, ProbeResult, PlaceholderSpec } from "./types";
 import type { models } from "powerbi-client";
 import { getActivePowerBiReport, resolveRealTableName, getDiscoveredTables, discoverModelTables } from "./pbiRuntime";
 
@@ -1064,6 +1064,27 @@ async function addFieldWithRoleFallback(
                     const desiredTitle = String(action?.format?.title || action?.title || `Total de ${String(basePayload.column || "campo")} únicos`).trim();
                     const targetVisualName = String((visual as any)?.name || "").trim();
 
+                    // Capture placeholder layout for replay after embed reload
+                    let placeholderSpec: PlaceholderSpec | undefined;
+                    try {
+                        const vLayout = (visual as any)?.layout || (visual as any)?.config?.layout;
+                        if (vLayout && typeof vLayout.x === "number") {
+                            placeholderSpec = {
+                                visual_type: "card",
+                                layout: { x: vLayout.x, y: vLayout.y, width: vLayout.width, height: vLayout.height },
+                                title: desiredTitle,
+                            };
+                        } else {
+                            // Fallback: use default card dimensions
+                            placeholderSpec = {
+                                visual_type: "card",
+                                layout: { x: 20, y: 20, width: 300, height: 200 },
+                                title: desiredTitle,
+                            };
+                        }
+                        if (debugPbi) console.log(`📋 Placeholder spec captured:`, JSON.stringify(placeholderSpec));
+                    } catch { /* best-effort */ }
+
                     // Deterministic probe: FOUND / INCONCLUSIVE / NOT_FOUND
                     const probeResult = await probeMeasureExists(visual, basePayload.table, measureName);
                     if (debugPbi) console.log(`🔍 Probe result: status=${probeResult.status} reason=${probeResult.reason || "—"} source=${probeResult.source}`);
@@ -1086,6 +1107,7 @@ async function addFieldWithRoleFallback(
                         table: basePayload.table,
                         column: basePayload.column,
                         probe_status: probeResult.status,
+                        placeholder_spec: placeholderSpec,
                     });
 
                     // Poll ONLY if measure confirmed FOUND (user just needs to drag)
@@ -2595,5 +2617,81 @@ async function handleExplainVisual(
             operation: action.operation,
             appliedToReport: false,
         };
+    }
+}
+
+/**
+ * Replay a placeholder card visual after embed reload/re-embed.
+ * Creates a new empty card at the same position with the same title.
+ * Returns the new visual name for tracking, or null on failure.
+ */
+export async function replayPlaceholderCard(
+    spec: PlaceholderSpec
+): Promise<{ ok: boolean; newVisualName: string | null }> {
+    const debug = shouldDebugPbi();
+    if (debug) console.log(`🔁 Placeholder replay start:`, JSON.stringify(spec));
+
+    try {
+        const report = getActivePowerBiReport();
+        if (!report) {
+            if (debug) console.warn("❌ Placeholder replay: no active report");
+            return { ok: false, newVisualName: null };
+        }
+
+        const activePage = await getEditableActivePage(report);
+        if (!activePage) {
+            if (debug) console.warn("❌ Placeholder replay: no editable page");
+            return { ok: false, newVisualName: null };
+        }
+
+        const pbiType = PBI_VISUAL_TYPE_MAP[spec.visual_type] || spec.visual_type || "card";
+        const layout = {
+            x: spec.layout.x,
+            y: spec.layout.y,
+            width: spec.layout.width,
+            height: spec.layout.height,
+            displayState: { mode: 0 },
+        };
+
+        if (debug) console.log(`📍 Replaying "${pbiType}" at x=${layout.x}, y=${layout.y}, w=${layout.width}, h=${layout.height}`);
+
+        const createResponse = await activePage.createVisual(pbiType, layout);
+        const createdVisual = createResponse?.visual;
+
+        if (!createdVisual) {
+            if (debug) console.warn("❌ Placeholder replay: createVisual returned no visual");
+            return { ok: false, newVisualName: null };
+        }
+
+        // Wait for visual to stabilize
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        // Re-fetch the visual to get authoring capabilities
+        const visuals = await activePage.getVisuals();
+        const targetVisual = visuals.find((v: any) => v.name === createdVisual.name) || createdVisual;
+        const newName = String(targetVisual?.name || createdVisual?.name || "").trim();
+
+        // Apply title
+        if (spec.title && typeof targetVisual?.setProperty === "function") {
+            try {
+                await targetVisual.setProperty(
+                    { objectName: "title", propertyName: "visible" },
+                    { value: true }
+                );
+                await targetVisual.setProperty(
+                    { objectName: "title", propertyName: "titleText" },
+                    { value: spec.title }
+                );
+                if (debug) console.log(`🏷️ Placeholder title applied: "${spec.title}"`);
+            } catch {
+                if (debug) console.warn("⚠️ Placeholder replay: title set failed (best-effort)");
+            }
+        }
+
+        if (debug) console.log(`✅ Placeholder replay OK: newVisualName="${newName}"`);
+        return { ok: true, newVisualName: newName || null };
+    } catch (err) {
+        if (debug) console.warn("❌ Placeholder replay failed:", err);
+        return { ok: false, newVisualName: null };
     }
 }
