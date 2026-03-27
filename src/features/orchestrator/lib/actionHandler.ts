@@ -2,7 +2,7 @@
  * Action Handler — Bridges AI-generated VisualAction JSON with Power BI JS SDK.
  */
 
-import type { ChatResponse, VisualAction, MeasureAssistantOpenDetail } from "./types";
+import type { ChatResponse, VisualAction, MeasureAssistantOpenDetail, ProbeResult } from "./types";
 import type { models } from "powerbi-client";
 import { getActivePowerBiReport, resolveRealTableName, getDiscoveredTables, discoverModelTables } from "./pbiRuntime";
 
@@ -69,18 +69,19 @@ function emitMeasureAssistantChatTimeout(target_visual_name: string): void {
 
 /**
  * Deterministic probe: tries to addDataField with measure schema on the target visual.
- * If the SDK accepts → measure exists (we immediately remove it to keep the visual clean).
- * If it throws → measure doesn't exist in the model.
+ * If the SDK accepts → FOUND (measure exists; we immediately remove it).
+ * If it throws with card-specific SDK errors → INCONCLUSIVE (SDK blocked, not proof of absence).
+ * NOT_FOUND only when we have strong evidence (e.g., explicit metadata lookup).
  */
 export async function probeMeasureExists(
     visual: any,
     tableName: string,
     measureName: string
-): Promise<{ exists: boolean; source: string }> {
+): Promise<ProbeResult> {
     const debugPbi = shouldDebugPbi();
     if (!visual || typeof visual.addDataField !== "function") {
-        if (debugPbi) console.log(`🔍 probeMeasureExists: visual has no addDataField → fallback exists=false`);
-        return { exists: false, source: "no_api" };
+        if (debugPbi) console.log(`🔍 probeMeasureExists: visual has no addDataField → INCONCLUSIVE`);
+        return { status: "INCONCLUSIVE", reason: "NO_API", source: "no_api" };
     }
 
     const cleanName = measureName.replace(/^\[|\]$/g, "").trim();
@@ -90,6 +91,11 @@ export async function probeMeasureExists(
         { $schema: "http://powerbi.com/product/schema#measure", table: tableName, name: `[${cleanName}]` },
     ];
     const probeRoles = ["Fields", "Values", "Y"];
+
+    // Track if ALL failures look like SDK/card blocking (→ INCONCLUSIVE)
+    // vs actual "measure not in model" (→ NOT_FOUND)
+    let allSdkBlocked = true;
+    const attempts: string[] = [];
 
     for (const role of probeRoles) {
         for (const payload of probePayloads) {
@@ -102,16 +108,34 @@ export async function probeMeasureExists(
                         await visual.removeDataField(role, payload);
                     }
                 } catch { /* cleanup best-effort */ }
-                if (debugPbi) console.log(`🔍 probeMeasureExists: EXISTS (role=${role})`);
-                return { exists: true, source: "addDataField" };
-            } catch {
-                // This variant failed — try next
+                if (debugPbi) console.log(`🔍 probeMeasureExists: FOUND (role=${role})`);
+                return { status: "FOUND", source: "addDataField" };
+            } catch (err: any) {
+                const msg = String(err?.message || err || "").toLowerCase();
+                attempts.push(`${role}:${msg.slice(0, 80)}`);
+                // Card-specific SDK blocks: these DON'T mean the measure doesn't exist
+                const isSdkBlock = msg.includes("failedtoadddatafield")
+                    || msg.includes("invalid")
+                    || msg.includes("unsupported")
+                    || msg.includes("target")
+                    || msg.includes("not supported")
+                    || msg.includes("cannot add");
+                if (!isSdkBlock) {
+                    allSdkBlocked = false;
+                }
             }
         }
     }
 
-    if (debugPbi) console.log(`🔍 probeMeasureExists: NOT FOUND for "${cleanName}" in table "${tableName}"`);
-    return { exists: false, source: "addDataField" };
+    // If ALL attempts failed with SDK-blocking errors → INCONCLUSIVE
+    // (the SDK is just refusing card measure bindings, not saying it doesn't exist)
+    if (allSdkBlocked) {
+        if (debugPbi) console.log(`🔍 probeMeasureExists: INCONCLUSIVE for "${cleanName}" (SDK_BLOCKED_MEASURE_BINDING)`);
+        return { status: "INCONCLUSIVE", reason: "SDK_BLOCKED_MEASURE_BINDING", source: "addDataField" };
+    }
+
+    if (debugPbi) console.log(`🔍 probeMeasureExists: INCONCLUSIVE for "${cleanName}" in table "${tableName}" (mixed errors)`);
+    return { status: "INCONCLUSIVE", reason: "MIXED_ERRORS", source: "addDataField" };
 }
 
 const measureAssistantPolls = new Map<string, number>();
@@ -1040,9 +1064,15 @@ async function addFieldWithRoleFallback(
                     const desiredTitle = String(action?.format?.title || action?.title || `Total de ${String(basePayload.column || "campo")} únicos`).trim();
                     const targetVisualName = String((visual as any)?.name || "").trim();
 
-                    // Deterministic probe: is the measure already in the model?
+                    // Deterministic probe: FOUND / INCONCLUSIVE / NOT_FOUND
                     const probeResult = await probeMeasureExists(visual, basePayload.table, measureName);
-                    if (debugPbi) console.log(`🔍 Probe result: exists=${probeResult.exists} source=${probeResult.source}`);
+                    if (debugPbi) console.log(`🔍 Probe result: status=${probeResult.status} reason=${probeResult.reason || "—"} source=${probeResult.source}`);
+
+                    const reasonMap = {
+                        FOUND: "La medida existe en el modelo. Arrástrala a la tarjeta.",
+                        NOT_FOUND: "La medida no existe aún. Créala en Desktop y luego arrástrala.",
+                        INCONCLUSIVE: "No puedo confirmar automáticamente si la medida existe. Búscala en el panel Datos o créala si no la encuentras.",
+                    };
 
                     emitMeasureAssistantOpen({
                         template_id: "distinct_count",
@@ -1051,17 +1081,15 @@ async function addFieldWithRoleFallback(
                         measure_name: measureName,
                         title: desiredTitle || undefined,
                         target_visual_name: targetVisualName || undefined,
-                        reason: probeResult.exists
-                            ? "La medida existe en el modelo. Arrástrala a la tarjeta."
-                            : "La medida no existe aún. Créala en Desktop y luego arrástrala.",
+                        reason: reasonMap[probeResult.status],
                         reason_code: "CARD_DISTINCTCOUNT_BLOCKED",
                         table: basePayload.table,
                         column: basePayload.column,
-                        measure_exists: probeResult.exists,
+                        probe_status: probeResult.status,
                     });
 
-                    // Only poll if the measure already exists (user just needs to drag)
-                    if (probeResult.exists) {
+                    // Poll if measure FOUND or INCONCLUSIVE (user might drag existing)
+                    if (probeResult.status === "FOUND" || probeResult.status === "INCONCLUSIVE") {
                         startMeasureAssistantPolling(targetVisualName);
                     }
 

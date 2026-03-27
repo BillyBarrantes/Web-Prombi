@@ -81,9 +81,18 @@ export type MeasureAssistantStatus =
     | "INIT"
     | "MEASURE_EXISTS"
     | "MEASURE_MISSING"
+    | "MEASURE_INCONCLUSIVE"
     | "WAITING_FOR_DRAG"
     | "SUCCESS"
     | "TROUBLESHOOT";
+
+export type ProbeStatus = "FOUND" | "NOT_FOUND" | "INCONCLUSIVE";
+
+export interface ProbeResult {
+    status: ProbeStatus;
+    reason?: string;
+    source: string;
+}
 
 export interface MeasureAssistantChatBubble {
     status: MeasureAssistantStatus;
@@ -94,7 +103,7 @@ export interface MeasureAssistantChatBubble {
     reason_code?: string;
     table?: string;
     column?: string;
-    measure_exists?: boolean;
+    probe_status?: ProbeStatus;
 }
 
 export interface ChatMessage {
@@ -213,6 +222,6 @@ export interface MeasureAssistantOpenDetail {
     reason_code?: string;
     table?: string;
     column?: string;
-    measure_exists?: boolean;
+    probe_status?: ProbeStatus;
     retry_action?: VisualAction;
 }
