@@ -152,15 +152,48 @@ async function apiFetch<T>(
     }
 }
 
-// ── Chat ─────────────────────────────────────────────────────
+function shouldDebugPbi(): boolean {
+    if (typeof window === "undefined") return false;
+    try {
+        const qs = new URLSearchParams(window.location.search);
+        if (qs.has("pbi_debug")) return true;
+        return window.localStorage?.getItem("PBI_DEBUG") === "1";
+    } catch {
+        return false;
+    }
+}
 
 export async function sendChatMessage(
     request: ChatRequest
 ): Promise<ChatResponse> {
-    return apiFetch<ChatResponse>("/api/v1/chat", {
-        method: "POST",
-        body: JSON.stringify(request),
-    });
+    const debugPbi = shouldDebugPbi();
+    try {
+        const response = await apiFetch<ChatResponse>("/api/v1/chat", {
+            method: "POST",
+            body: JSON.stringify(request),
+        });
+        if (debugPbi) {
+            console.log("📡 ChatResponse:", {
+                operation: response.action?.operation,
+                intent: response.intent,
+                explanation: response.action?.explanation?.slice(0, 120),
+                confidence: response.confidence,
+                retries_used: response.retries_used,
+                actionsCount: response.actions?.length ?? 0,
+            });
+        }
+        return response;
+    } catch (err) {
+        if (debugPbi) {
+            const label = err instanceof ApiTimeoutError ? "TIMEOUT"
+                : err instanceof ApiRateLimitError ? "RATE_LIMIT"
+                : err instanceof ApiServerError ? `SERVER_${(err as ApiServerError).errorType}`
+                : err instanceof ApiConnectionError ? "CONNECTION"
+                : "UNKNOWN";
+            console.warn(`📡 /api/v1/chat ERROR [${label}]:`, (err as any)?.message || err);
+        }
+        throw err;
+    }
 }
 
 // ── History (Phase 6) ────────────────────────────────────────

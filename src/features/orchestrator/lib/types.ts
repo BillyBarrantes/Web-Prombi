@@ -77,8 +77,16 @@ export interface VisualAction {
 
 // ── Messages ─────────────────────────────────────────────────
 
+export type MeasureAssistantStatus =
+    | "INIT"
+    | "MEASURE_EXISTS"
+    | "MEASURE_MISSING"
+    | "WAITING_FOR_DRAG"
+    | "SUCCESS"
+    | "TROUBLESHOOT";
+
 export interface MeasureAssistantChatBubble {
-    status: "pending" | "success" | "timeout";
+    status: MeasureAssistantStatus;
     measure_name?: string;
     dax?: string;
     title?: string;
@@ -86,6 +94,7 @@ export interface MeasureAssistantChatBubble {
     reason_code?: string;
     table?: string;
     column?: string;
+    measure_exists?: boolean;
 }
 
 export interface ChatMessage {
@@ -204,5 +213,6 @@ export interface MeasureAssistantOpenDetail {
     reason_code?: string;
     table?: string;
     column?: string;
+    measure_exists?: boolean;
     retry_action?: VisualAction;
 }

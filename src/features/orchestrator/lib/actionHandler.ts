@@ -67,6 +67,53 @@ function emitMeasureAssistantChatTimeout(target_visual_name: string): void {
     }
 }
 
+/**
+ * Deterministic probe: tries to addDataField with measure schema on the target visual.
+ * If the SDK accepts → measure exists (we immediately remove it to keep the visual clean).
+ * If it throws → measure doesn't exist in the model.
+ */
+export async function probeMeasureExists(
+    visual: any,
+    tableName: string,
+    measureName: string
+): Promise<{ exists: boolean; source: string }> {
+    const debugPbi = shouldDebugPbi();
+    if (!visual || typeof visual.addDataField !== "function") {
+        if (debugPbi) console.log(`🔍 probeMeasureExists: visual has no addDataField → fallback exists=false`);
+        return { exists: false, source: "no_api" };
+    }
+
+    const cleanName = measureName.replace(/^\[|\]$/g, "").trim();
+    const probePayloads = [
+        { $schema: "http://powerbi.com/product/schema#measure", table: tableName, name: cleanName },
+        { $schema: "http://powerbi.com/product/schema#measure", name: cleanName },
+        { $schema: "http://powerbi.com/product/schema#measure", table: tableName, name: `[${cleanName}]` },
+    ];
+    const probeRoles = ["Fields", "Values", "Y"];
+
+    for (const role of probeRoles) {
+        for (const payload of probePayloads) {
+            try {
+                if (debugPbi) console.log(`🔍 probe addDataField("${role}", ${JSON.stringify(payload)})`);
+                await visual.addDataField(role, payload);
+                // Success → measure exists! Clean up immediately.
+                try {
+                    if (typeof visual.removeDataField === "function") {
+                        await visual.removeDataField(role, payload);
+                    }
+                } catch { /* cleanup best-effort */ }
+                if (debugPbi) console.log(`🔍 probeMeasureExists: EXISTS (role=${role})`);
+                return { exists: true, source: "addDataField" };
+            } catch {
+                // This variant failed — try next
+            }
+        }
+    }
+
+    if (debugPbi) console.log(`🔍 probeMeasureExists: NOT FOUND for "${cleanName}" in table "${tableName}"`);
+    return { exists: false, source: "addDataField" };
+}
+
 const measureAssistantPolls = new Map<string, number>();
 
 const measureAssistantPollInFlight = new Set<string>();
@@ -993,6 +1040,10 @@ async function addFieldWithRoleFallback(
                     const desiredTitle = String(action?.format?.title || action?.title || `Total de ${String(basePayload.column || "campo")} únicos`).trim();
                     const targetVisualName = String((visual as any)?.name || "").trim();
 
+                    // Deterministic probe: is the measure already in the model?
+                    const probeResult = await probeMeasureExists(visual, basePayload.table, measureName);
+                    if (debugPbi) console.log(`🔍 Probe result: exists=${probeResult.exists} source=${probeResult.source}`);
+
                     emitMeasureAssistantOpen({
                         template_id: "distinct_count",
                         vars: { table: basePayload.table, column: basePayload.column },
@@ -1000,13 +1051,19 @@ async function addFieldWithRoleFallback(
                         measure_name: measureName,
                         title: desiredTitle || undefined,
                         target_visual_name: targetVisualName || undefined,
-                        reason: "Este KPI requiere una medida en el modelo. Créala y luego arrástrala a la tarjeta.",
+                        reason: probeResult.exists
+                            ? "La medida existe en el modelo. Arrástrala a la tarjeta."
+                            : "La medida no existe aún. Créala en Desktop y luego arrástrala.",
                         reason_code: "CARD_DISTINCTCOUNT_BLOCKED",
                         table: basePayload.table,
                         column: basePayload.column,
+                        measure_exists: probeResult.exists,
                     });
 
-                    startMeasureAssistantPolling(targetVisualName);
+                    // Only poll if the measure already exists (user just needs to drag)
+                    if (probeResult.exists) {
+                        startMeasureAssistantPolling(targetVisualName);
+                    }
 
                     return { ok: true };
                 }

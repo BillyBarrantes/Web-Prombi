@@ -12,10 +12,11 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { sendChatMessage, ApiTimeoutError, ApiRateLimitError, ApiConnectionError } from "../lib/api";
+import { sendChatMessage, ApiTimeoutError, ApiRateLimitError, ApiConnectionError, ApiServerError } from "../lib/api";
 import { getCanvasVisualContext, getActivePowerBiReport } from "../lib/pbiRuntime";
-import type { ChatMessage, ChatResponse, MeasureAssistantOpenDetail } from "../lib/types";
+import type { ChatMessage, ChatResponse, MeasureAssistantOpenDetail, MeasureAssistantStatus } from "../lib/types";
 import type { ActionResult } from "../lib/actionHandler";
+import { probeMeasureExists } from "../lib/actionHandler";
 import ActionCard from "./ActionCard";
 
 interface ChatSidebarProps {
@@ -99,63 +100,90 @@ export default function ChatSidebar({
 
             let satisfied = false;
 
-            // 1) Best-effort: datafields may lie/return empty after manual drag in some tenants.
             if (typeof (v as any).getDataFields === "function") {
                 try {
                     const allFields = await (v as any).getDataFields();
                     if (allFields && typeof allFields === "object") {
                         for (const val of Object.values(allFields as Record<string, unknown>)) {
-                            if (Array.isArray(val) && val.length > 0) {
-                                satisfied = true;
-                                break;
-                            }
+                            if (Array.isArray(val) && val.length > 0) { satisfied = true; break; }
                         }
                     }
-                } catch {
-                    // ignore
-                }
+                } catch { /* ignore */ }
             }
 
-            // 2) Authoritative: export summarized data; if it returns body rows, visual has a binding.
             if (!satisfied && typeof (v as any).exportData === "function") {
                 try {
                     const pbiClient = await import("powerbi-client");
                     const exportDataResult = await (v as any).exportData(pbiClient.models.ExportDataType.Summarized);
                     const csvData = String(exportDataResult?.data || "");
-                    const lines = csvData
-                        .split(/\r?\n/)
-                        .map((l) => l.trim())
-                        .filter(Boolean);
-                    satisfied = lines.length >= 2; // header + at least one data row
-                } catch {
-                    // ignore
-                }
+                    const lines = csvData.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+                    satisfied = lines.length >= 2;
+                } catch { /* ignore */ }
             }
 
             console.log(`🧪 Manual verify result visual=${targetVisualName} satisfied=${satisfied}`);
             if (satisfied) {
-                window.dispatchEvent(
-                    new CustomEvent("measure-assistant:chat_success", {
-                        detail: { target_visual_name: targetVisualName },
-                    })
-                );
+                window.dispatchEvent(new CustomEvent("measure-assistant:chat_success", { detail: { target_visual_name: targetVisualName } }));
             } else {
-                setManualVerifyMsg((prev) => ({
-                    ...prev,
-                    [targetVisualName]:
-                        "Si ya ves el número en la tarjeta, puedes continuar. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows).",
-                }));
+                setManualVerifyMsg((prev) => ({ ...prev, [targetVisualName]: "Si ya ves el número en la tarjeta, puedes continuar. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
             }
         } catch {
-            setManualVerifyMsg((prev) => ({
-                ...prev,
-                [targetVisualName]:
-                    "No pude verificar el visual. Si ya ves el número en la tarjeta, puedes continuar. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows).",
-            }));
+            setManualVerifyMsg((prev) => ({ ...prev, [targetVisualName]: "No pude verificar. Si ya ves el número, continúa. Si no, recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
         }
     }, []);
 
-    // Measure Assistant (Chat) — escucha eventos disparados por actionHandler cuando el SDK bloquea inyección.
+    // ── Reprobe: "Ya la creé" button ───────────────────────
+    const handleReprobe = useCallback(async (targetVisualName: string) => {
+        console.log(`🔍 Reprobe clicked visual=${targetVisualName}`);
+        try {
+            const report = await getActivePowerBiReport();
+            if (!report || typeof (report as any).getActivePage !== "function") return;
+            const page = await (report as any).getActivePage();
+            if (!page || typeof page.getVisuals !== "function") return;
+            const visuals = await page.getVisuals();
+            const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === targetVisualName) : null;
+            if (!v) return;
+
+            // Find the bubble to get table/measure info
+            const bubbleMsg = messages.find(m => m.id === `measure-assistant-${targetVisualName}`);
+            const tableName = bubbleMsg?.measure_assistant?.table || "";
+            const measureName = bubbleMsg?.measure_assistant?.measure_name || "";
+
+            const probeResult = await probeMeasureExists(v, tableName, measureName);
+            console.log(`🔍 Reprobe result: exists=${probeResult.exists}`);
+
+            const msgId = `measure-assistant-${targetVisualName}`;
+            if (probeResult.exists) {
+                // Transition to MEASURE_EXISTS and start polling
+                setMessages(prev => prev.map(m => {
+                    if (m.id !== msgId || !m.measure_assistant) return m;
+                    return {
+                        ...m,
+                        content: `¡La medida "${measureName}" ya existe! Arrástrala a la tarjeta.`,
+                        measure_assistant: { ...m.measure_assistant, status: "MEASURE_EXISTS" as MeasureAssistantStatus, measure_exists: true },
+                    };
+                }));
+                // Dispatch event to start polling from actionHandler
+                window.dispatchEvent(new CustomEvent("measure-assistant:start_polling", { detail: { target_visual_name: targetVisualName } }));
+            } else {
+                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "La medida aún no se detecta en el modelo. Verifica que publicaste el reporte y recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)." }));
+            }
+        } catch {
+            setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "No pude verificar. Recarga con Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows) y reintenta." }));
+        }
+    }, [messages]);
+
+    // ── Troubleshoot: "No pude" button ──────────────────
+    const handleTroubleshoot = useCallback((targetVisualName: string) => {
+        const msgId = `measure-assistant-${targetVisualName}`;
+        console.log(`❓ Troubleshoot clicked visual=${targetVisualName}`);
+        setMessages(prev => prev.map(m => {
+            if (m.id !== msgId || !m.measure_assistant) return m;
+            return { ...m, measure_assistant: { ...m.measure_assistant, status: "TROUBLESHOOT" as MeasureAssistantStatus } };
+        }));
+    }, []);
+
+    // Measure Assistant (Chat) — escucha eventos disparados por actionHandler.
     useEffect(() => {
         if (typeof window === "undefined") return;
 
@@ -172,50 +200,38 @@ export default function ChatSidebar({
             const reasonCode = String(detail.reason_code || "");
             const table = String(detail.table || "");
             const column = String(detail.column || "");
+            const measureExists = detail.measure_exists === true;
+
+            // Determine initial wizard state
+            const initialStatus: MeasureAssistantStatus = measureExists ? "MEASURE_EXISTS" : "MEASURE_MISSING";
+            const initialContent = measureExists
+                ? `Necesito que arrastres la medida "${measureName}" a la tarjeta "${title}".`
+                : `Primero hay que crear la medida "${measureName}" en Power BI Desktop.`;
+
+            console.log(`💬 MeasureAssistant wizard: state=${initialStatus} measure_exists=${measureExists} visual=${visualKey}`);
 
             setMessages((prev) => {
-                // T7: Si ya existe burbuja para este visual, actualizar en lugar de duplicar.
                 const existingIdx = prev.findIndex((m) => m.id === msgId);
+                const bubbleData = {
+                    status: initialStatus,
+                    measure_name: measureName,
+                    dax,
+                    title,
+                    target_visual_name: visualKey || undefined,
+                    reason_code: reasonCode || undefined,
+                    table: table || undefined,
+                    column: column || undefined,
+                    measure_exists: measureExists,
+                };
+
                 if (existingIdx !== -1) {
                     console.log(`♻️ MeasureAssistant bubble reused visual=${visualKey}`);
                     const updated = [...prev];
-                    updated[existingIdx] = {
-                        ...updated[existingIdx],
-                        content: `He preparado la tarjeta "${title}". Por restricciones del SDK, necesito que arrastres la medida "${measureName}" hacia la tarjeta.`,
-                        measure_assistant: {
-                            status: "pending",
-                            measure_name: measureName,
-                            dax,
-                            title,
-                            target_visual_name: visualKey || undefined,
-                            reason_code: reasonCode || undefined,
-                            table: table || undefined,
-                            column: column || undefined,
-                        },
-                    };
+                    updated[existingIdx] = { ...updated[existingIdx], content: initialContent, measure_assistant: bubbleData };
                     return updated;
                 }
 
-                console.log(`💬 MeasureAssistant bubble created for visual=${visualKey}`);
-                return [
-                    ...prev,
-                    {
-                        id: msgId,
-                        role: "assistant",
-                        content: `He preparado la tarjeta "${title}". Por restricciones del SDK, necesito que arrastres la medida "${measureName}" hacia la tarjeta.`,
-                        timestamp: new Date(),
-                        measure_assistant: {
-                            status: "pending",
-                            measure_name: measureName,
-                            dax,
-                            title,
-                            target_visual_name: visualKey || undefined,
-                            reason_code: reasonCode || undefined,
-                            table: table || undefined,
-                            column: column || undefined,
-                        },
-                    } as any,
-                ];
+                return [ ...prev, { id: msgId, role: "assistant", content: initialContent, timestamp: new Date(), measure_assistant: bubbleData } as any ];
             });
         };
 
@@ -223,29 +239,15 @@ export default function ChatSidebar({
             const visualKey = String((ev as any)?.detail?.target_visual_name || "").trim();
             if (!visualKey) return;
             const msgId = `measure-assistant-${visualKey}`;
-            console.log(`💬 MeasureAssistant success message appended visual=${visualKey}`);
-            console.log(`💬 MeasureAssistant bubble status=success visual=${visualKey}`);
+            console.log(`💬 MeasureAssistant wizard: state=SUCCESS visual=${visualKey}`);
 
             setMessages((prev) => {
                 const next = prev.map((m) => {
-                    if (m.id !== msgId) return m;
-                    if (!m.measure_assistant) return m;
-                    return {
-                        ...m,
-                        measure_assistant: { ...m.measure_assistant, status: "success" as const },
-                    };
+                    if (m.id !== msgId || !m.measure_assistant) return m;
+                    return { ...m, measure_assistant: { ...m.measure_assistant, status: "SUCCESS" as MeasureAssistantStatus } };
                 });
-                return [
-                    ...next,
-                    {
-                        id: `measure-assistant-ok-${Date.now()}`,
-                        role: "assistant",
-                        content: "¡Listo! Detecté la medida en la tarjeta. 🎉",
-                        timestamp: new Date(),
-                    },
-                ];
+                return [ ...next, { id: `measure-assistant-ok-${Date.now()}`, role: "assistant", content: "✅ Medida detectada, tarjeta actualizada. 🎉", timestamp: new Date() } ];
             });
-            // Limpiar mensaje de verify manual si había
             setManualVerifyMsg(prev => { const n = { ...prev }; delete n[visualKey]; return n; });
         };
 
@@ -253,24 +255,74 @@ export default function ChatSidebar({
             const visualKey = String((ev as any)?.detail?.target_visual_name || "").trim();
             if (!visualKey) return;
             const msgId = `measure-assistant-${visualKey}`;
-            console.log(`💬 MeasureAssistant bubble status=timeout visual=${visualKey}`);
+            console.log(`💬 MeasureAssistant wizard: state=TROUBLESHOOT (timeout) visual=${visualKey}`);
 
-            setMessages((prev) =>
-                prev.map((m) => {
-                    if (m.id !== msgId) return m;
-                    if (!m.measure_assistant) return m;
-                    return { ...m, measure_assistant: { ...m.measure_assistant, status: "timeout" as const } };
-                })
-            );
+            setMessages((prev) => prev.map((m) => {
+                if (m.id !== msgId || !m.measure_assistant) return m;
+                return { ...m, measure_assistant: { ...m.measure_assistant, status: "TROUBLESHOOT" as MeasureAssistantStatus } };
+            }));
+        };
+
+        // Listen for start_polling event from reprobe
+        const onStartPolling = (ev: any) => {
+            const visualKey = String((ev as any)?.detail?.target_visual_name || "").trim();
+            if (!visualKey) return;
+            // For reprobe case, polling needs to start fresh. We use a direct approach:
+            console.log(`🕵️ Starting polling for visual=${visualKey} (from reprobe)`);
+            const startedAt = Date.now();
+            const timeoutMs = 2 * 60 * 1000;
+            const intervalMs = 900;
+            const intervalId = window.setInterval(async () => {
+                try {
+                    if (Date.now() - startedAt > timeoutMs) {
+                        window.clearInterval(intervalId);
+                        window.dispatchEvent(new CustomEvent("measure-assistant:chat_timeout", { detail: { target_visual_name: visualKey } }));
+                        return;
+                    }
+                    const report = await getActivePowerBiReport();
+                    if (!report || typeof (report as any).getActivePage !== "function") return;
+                    const page = await (report as any).getActivePage();
+                    if (!page || typeof page.getVisuals !== "function") return;
+                    const visuals = await page.getVisuals();
+                    const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === visualKey) : null;
+                    if (!v) return;
+                    let satisfied = false;
+                    if (typeof v.getDataFields === "function") {
+                        try {
+                            const allFields = await v.getDataFields();
+                            if (allFields && typeof allFields === "object") {
+                                for (const val of Object.values(allFields as Record<string, unknown>)) {
+                                    if (Array.isArray(val) && val.length > 0) { satisfied = true; break; }
+                                }
+                            }
+                        } catch { /* ignore */ }
+                    }
+                    if (!satisfied && typeof v.exportData === "function") {
+                        try {
+                            const pbiClient = await import("powerbi-client");
+                            const exportDataResult = await v.exportData(pbiClient.models.ExportDataType.Summarized);
+                            const csvData = String(exportDataResult?.data || "");
+                            const lines = csvData.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+                            satisfied = lines.length >= 2;
+                        } catch { /* ignore */ }
+                    }
+                    if (satisfied) {
+                        window.clearInterval(intervalId);
+                        window.dispatchEvent(new CustomEvent("measure-assistant:chat_success", { detail: { target_visual_name: visualKey } }));
+                    }
+                } catch { /* ignore */ }
+            }, intervalMs);
         };
 
         window.addEventListener("measure-assistant:chat_open", onOpen as any);
         window.addEventListener("measure-assistant:chat_success", onSuccess as any);
         window.addEventListener("measure-assistant:chat_timeout", onTimeout as any);
+        window.addEventListener("measure-assistant:start_polling", onStartPolling as any);
         return () => {
             window.removeEventListener("measure-assistant:chat_open", onOpen as any);
             window.removeEventListener("measure-assistant:chat_success", onSuccess as any);
             window.removeEventListener("measure-assistant:chat_timeout", onTimeout as any);
+            window.removeEventListener("measure-assistant:start_polling", onStartPolling as any);
         };
     }, []);
     // Cleanup loading timer
@@ -360,29 +412,52 @@ export default function ChatSidebar({
                 assistantMsg,
             ]);
 
-            // Notificar al padre sobre la acción generada
-            if (onActionGenerated) {
-                const actionResult = await onActionGenerated(response);
-                const hasExplainAction =
-                    response.action?.operation === "EXPLAIN" ||
-                    (Array.isArray(response.actions) &&
-                        response.actions.some((a) => a.operation === "EXPLAIN"));
-                if (actionResult && actionResult.success && (actionResult.operation === "EXPLAIN" || hasExplainAction)) {
-                    setMessages((prevMessages) => {
-                        const newMessages = [...prevMessages];
-                        const lastAssistantIndex = newMessages.map((m) => m.role).lastIndexOf("assistant");
-                        if (lastAssistantIndex !== -1) {
-                            const current = newMessages[lastAssistantIndex];
-                            newMessages[lastAssistantIndex] = {
-                                ...current,
-                                content: actionResult.message,
-                                action: current.action
-                                    ? { ...current.action, explanation: actionResult.message }
-                                    : current.action,
-                            };
-                        }
-                        return newMessages;
-                    });
+            // ── Short-circuit: ERROR actions from backend ──
+            // Si el backend devuelve operation=ERROR, NO llamar actionHandler.
+            // Solo renderizar el mensaje de error en el chat con botón de retry.
+            const allActions = response.actions && response.actions.length > 0
+                ? response.actions
+                : response.action ? [response.action] : [];
+            const isErrorAction = allActions.length > 0 && allActions.every(a => a.operation === "ERROR");
+
+            if (isErrorAction) {
+                const errorExplanation = response.action?.explanation || "El servidor reportó un error. Intenta de nuevo.";
+                setMessages((prev) => [
+                    ...prev.filter((m) => !m.isLoading),
+                    {
+                        id: `error-${Date.now()}`,
+                        role: "assistant",
+                        content: `⚠️ ${errorExplanation}`,
+                        timestamp: new Date(),
+                        isError: true,
+                        failedMessage: text,
+                    } as ChatMessage,
+                ]);
+            } else {
+                // Notificar al padre sobre la acción generada (solo si NO es ERROR)
+                if (onActionGenerated) {
+                    const actionResult = await onActionGenerated(response);
+                    const hasExplainAction =
+                        response.action?.operation === "EXPLAIN" ||
+                        (Array.isArray(response.actions) &&
+                            response.actions.some((a) => a.operation === "EXPLAIN"));
+                    if (actionResult && actionResult.success && (actionResult.operation === "EXPLAIN" || hasExplainAction)) {
+                        setMessages((prevMessages) => {
+                            const newMessages = [...prevMessages];
+                            const lastAssistantIndex = newMessages.map((m) => m.role).lastIndexOf("assistant");
+                            if (lastAssistantIndex !== -1) {
+                                const current = newMessages[lastAssistantIndex];
+                                newMessages[lastAssistantIndex] = {
+                                    ...current,
+                                    content: actionResult.message,
+                                    action: current.action
+                                        ? { ...current.action, explanation: actionResult.message }
+                                        : current.action,
+                                };
+                            }
+                            return newMessages;
+                        });
+                    }
                 }
             }
         } catch (error) {
@@ -392,13 +467,16 @@ export default function ChatSidebar({
 
             if (error instanceof ApiTimeoutError) {
                 errorIcon = "⏰";
-                errorContent = error.message;
+                errorContent = "La solicitud tardó demasiado. Intenta de nuevo en unos segundos.";
             } else if (error instanceof ApiRateLimitError) {
                 errorIcon = "🚦";
                 errorContent = error.message;
             } else if (error instanceof ApiConnectionError) {
                 errorIcon = "📡";
-                errorContent = error.message;
+                errorContent = "No se pudo conectar con el servidor. Verifica tu conexión.";
+            } else if (error instanceof ApiServerError) {
+                errorIcon = "🔧";
+                errorContent = `Servicio temporalmente no disponible: ${error.message}`;
             } else if (error instanceof Error) {
                 errorContent = error.message;
             }
@@ -498,98 +576,153 @@ export default function ChatSidebar({
                                             const visualKey = ma.target_visual_name || "";
                                             const isHelp = expandedHelp[visualKey] || false;
                                             const verifyFallback = manualVerifyMsg[visualKey];
+                                            const st = ma.status;
+
+                                            const borderClass = st === "SUCCESS"
+                                                ? "border-green-500/30 bg-green-900/10"
+                                                : st === "TROUBLESHOOT"
+                                                    ? "border-yellow-500/30 bg-yellow-900/10"
+                                                    : st === "MEASURE_MISSING"
+                                                        ? "border-orange-500/20 bg-orange-900/5"
+                                                        : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]";
 
                                             return (
-                                                <div className={`mt-3 rounded-xl border p-3 ${
-                                                    ma.status === "success"
-                                                        ? "border-green-500/30 bg-green-900/10"
-                                                        : ma.status === "timeout"
-                                                            ? "border-yellow-500/30 bg-yellow-900/10"
-                                                            : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
-                                                }`}>
-                                                    {/* ── Bloque 1: Qué pasó ── */}
-                                                    <p className="text-xs font-semibold text-[var(--color-text-primary)] mb-2">
-                                                        {ma.status === "success" && "✅ Medida detectada en la tarjeta."}
-                                                        {ma.status === "timeout" && "⏳ No se detectó la medida después de 2 minutos."}
-                                                        {ma.status === "pending" && `⚠️ La agregación "${ma.measure_name || "medida"}" no puede inyectarse automáticamente en esta tarjeta.`}
-                                                    </p>
+                                                <div className={`mt-3 rounded-xl border p-3 ${borderClass}`}>
 
-                                                    {/* ── Bloque 2: Qué hacer ahora (solo pending/timeout) ── */}
-                                                    {(ma.status === "pending" || ma.status === "timeout") && (
-                                                        <div className="text-xs text-[var(--color-text-secondary)] space-y-1 mb-2">
-                                                            <p className="font-medium">Qué hacer ahora:</p>
-                                                            <ol className="list-decimal list-inside space-y-0.5">
-                                                                <li>Busca <strong>"{ma.measure_name}"</strong> en el panel de Datos (derecha)</li>
-                                                                <li>Arrastra esa medida a la tarjeta vacía en el lienzo</li>
-                                                                <li>Cuando la detecte, te confirmo aquí automáticamente</li>
-                                                            </ol>
-                                                            {ma.status === "timeout" && (
-                                                                <p className="mt-1 text-yellow-400">
-                                                                    Si ya la asignaste, recarga con <strong>Cmd+Shift+R</strong> (Mac) / <strong>Ctrl+Shift+R</strong> (Windows).
-                                                                </p>
+                                                    {/* ── SUCCESS ── */}
+                                                    {st === "SUCCESS" && (
+                                                        <p className="text-xs font-semibold text-green-400">✅ Medida detectada en la tarjeta. Completado.</p>
+                                                    )}
+
+                                                    {/* ── MEASURE_EXISTS / WAITING_FOR_DRAG ── */}
+                                                    {(st === "MEASURE_EXISTS" || st === "WAITING_FOR_DRAG") && (
+                                                        <>
+                                                            <p className="text-xs font-semibold text-[var(--color-text-primary)] mb-2">
+                                                                📥 Necesito que arrastres una medida
+                                                            </p>
+                                                            <div className="text-xs text-[var(--color-text-secondary)] space-y-1 mb-2">
+                                                                <ol className="list-decimal list-inside space-y-0.5">
+                                                                    <li>En el panel <strong>Datos</strong> (derecha), busca la medida <strong>"{ma.measure_name}"</strong> (ícono de calculadora).</li>
+                                                                    <li>Arrastra esa medida hacia la tarjeta vacía en el lienzo.</li>
+                                                                    <li>Cuando la detecte, te confirmo aquí automáticamente.</li>
+                                                                </ol>
+                                                            </div>
+                                                            {st === "MEASURE_EXISTS" && (
+                                                                <p className="text-[10px] text-[var(--color-text-muted)] mb-2 animate-pulse">🔎 Detectando cambios automáticamente…</p>
                                                             )}
-                                                        </div>
+                                                        </>
                                                     )}
 
-                                                    {/* ── DAX ── */}
-                                                    {ma.dax && (
-                                                        <pre className="whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] text-[var(--color-text-primary)] mb-2">
-                                                            {ma.dax}
-                                                        </pre>
+                                                    {/* ── MEASURE_MISSING ── */}
+                                                    {st === "MEASURE_MISSING" && (
+                                                        <>
+                                                            <p className="text-xs font-semibold text-[var(--color-text-primary)] mb-2">
+                                                                🛠️ Primero hay que crear una medida (Power BI Desktop)
+                                                            </p>
+                                                            <div className="text-xs text-[var(--color-text-secondary)] space-y-1 mb-2">
+                                                                <p>Esto requiere crear una medida en el modelo.</p>
+                                                                <ol className="list-decimal list-inside space-y-0.5">
+                                                                    <li>En <strong>Power BI Desktop</strong> (Windows): pestaña <strong>Modelado → Nueva medida</strong>.</li>
+                                                                    <li>Pega este DAX y guarda:</li>
+                                                                </ol>
+                                                            </div>
+                                                            {ma.dax && (
+                                                                <pre className="whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] text-[var(--color-text-primary)] mb-2">{ma.dax}</pre>
+                                                            )}
+                                                            <div className="text-xs text-[var(--color-text-secondary)] space-y-1 mb-2">
+                                                                <ol className="list-decimal list-inside space-y-0.5" start={3}>
+                                                                    <li>Publica/guarda el reporte y vuelve a PromtBI.</li>
+                                                                    <li>Presiona <strong>"Ya la creé"</strong> aquí abajo.</li>
+                                                                </ol>
+                                                            </div>
+                                                            <p className="text-[10px] text-[var(--color-text-muted)] mb-2">
+                                                                ℹ️ En Power BI Web normalmente no se pueden crear medidas sin permisos de edición del dataset. Si estás solo en Web, abre el reporte en Desktop o pide permisos.
+                                                            </p>
+                                                        </>
                                                     )}
 
-                                                    {/* ── Botones (solo pending/timeout) ── */}
-                                                    {(ma.status === "pending" || ma.status === "timeout") && (
+                                                    {/* ── TROUBLESHOOT ── */}
+                                                    {st === "TROUBLESHOOT" && (
+                                                        <>
+                                                            <p className="text-xs font-semibold text-yellow-400 mb-2">⚠️ Solución de problemas</p>
+                                                            <div className="text-xs text-[var(--color-text-secondary)] space-y-1 mb-2">
+                                                                <ul className="list-disc list-inside space-y-0.5">
+                                                                    <li>¿Ves el ícono de calculadora 🔢 junto al campo? Si no, no es una medida.</li>
+                                                                    <li>¿Estás en <strong>modo Edición</strong> en Power BI?</li>
+                                                                    <li>¿Tu organización bloquea edición del dataset?</li>
+                                                                    <li>Recarga con <strong>Cmd+Shift+R</strong> (Mac) / <strong>Ctrl+Shift+R</strong> (Windows) para refrescar el modelo.</li>
+                                                                </ul>
+                                                            </div>
+                                                        </>
+                                                    )}
+
+                                                    {/* ── DAX (MEASURE_EXISTS / WAITING_FOR_DRAG / TROUBLESHOOT) ── */}
+                                                    {ma.dax && st !== "MEASURE_MISSING" && st !== "SUCCESS" && (
+                                                        <pre className="whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] text-[var(--color-text-primary)] mb-2">{ma.dax}</pre>
+                                                    )}
+
+                                                    {/* ── Botones ── */}
+                                                    {st !== "SUCCESS" && (
                                                         <div className="flex flex-wrap gap-2 mb-2">
                                                             {ma.dax && (
                                                                 <button
-                                                                    onClick={async () => {
-                                                                        try { await navigator.clipboard.writeText(ma.dax || ""); } catch { /* ignore */ }
-                                                                    }}
+                                                                    onClick={async () => { try { await navigator.clipboard.writeText(ma.dax || ""); } catch { /* */ } }}
                                                                     className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
-                                                                >
-                                                                    📋 Copiar DAX
-                                                                </button>
+                                                                >📋 Copiar DAX</button>
                                                             )}
-                                                            {visualKey && (
+
+                                                            {/* "Listo, ya la arrastré" — only when measure exists */}
+                                                            {(st === "MEASURE_EXISTS" || st === "WAITING_FOR_DRAG") && visualKey && (
                                                                 <button
                                                                     onClick={() => handleManualVerify(visualKey)}
                                                                     className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
-                                                                >
-                                                                    ✅ Listo, ya la arrastré
-                                                                </button>
+                                                                >✅ Listo, ya la arrastré</button>
                                                             )}
-                                                            <button
-                                                                onClick={() => setExpandedHelp(prev => ({ ...prev, [visualKey]: !prev[visualKey] }))}
-                                                                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-accent)] cursor-pointer"
-                                                            >
-                                                                ❓ ¿Dónde la encuentro?
-                                                            </button>
+
+                                                            {/* "Ya la creé" — only when measure missing */}
+                                                            {st === "MEASURE_MISSING" && visualKey && (
+                                                                <button
+                                                                    onClick={() => handleReprobe(visualKey)}
+                                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
+                                                                >✅ Ya la creé</button>
+                                                            )}
+
+                                                            {/* "No pude" — on missing or exists */}
+                                                            {(st === "MEASURE_EXISTS" || st === "MEASURE_MISSING" || st === "WAITING_FOR_DRAG") && (
+                                                                <button
+                                                                    onClick={() => handleTroubleshoot(visualKey)}
+                                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-accent)] cursor-pointer"
+                                                                >❌ No pude</button>
+                                                            )}
+
+                                                            {/* "Reintentar verificación" — troubleshoot */}
+                                                            {st === "TROUBLESHOOT" && visualKey && (
+                                                                <button
+                                                                    onClick={() => handleReprobe(visualKey)}
+                                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 py-2 text-xs font-semibold text-white hover:opacity-90 cursor-pointer"
+                                                                >🔄 Reintentar verificación</button>
+                                                            )}
+
+                                                            {/* Expand help */}
+                                                            {st !== "TROUBLESHOOT" && (
+                                                                <button
+                                                                    onClick={() => setExpandedHelp(prev => ({ ...prev, [visualKey]: !prev[visualKey] }))}
+                                                                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:border-[var(--color-accent)] cursor-pointer"
+                                                                >❓ ¿Dónde la encuentro?</button>
+                                                            )}
                                                         </div>
                                                     )}
 
-                                                    {/* ── Verify fallback message (T5) ── */}
-                                                    {verifyFallback && (
-                                                        <p className="text-xs text-yellow-400 mb-2">{verifyFallback}</p>
-                                                    )}
+                                                    {/* Verify fallback message */}
+                                                    {verifyFallback && <p className="text-xs text-yellow-400 mb-2">{verifyFallback}</p>}
 
-                                                    {/* ── Bloque 3: Expand — si NO existe la medida (T2/T8) ── */}
-                                                    {isHelp && (
+                                                    {/* Expand help panel */}
+                                                    {isHelp && st !== "TROUBLESHOOT" && st !== "SUCCESS" && (
                                                         <div className="text-xs text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-2 mt-1 space-y-1">
-                                                            <p className="font-medium text-[var(--color-text-secondary)]">Si la medida NO existe en el modelo:</p>
-                                                            <ol className="list-decimal list-inside space-y-0.5">
-                                                                <li>Abre Power BI Desktop</li>
-                                                                <li>Ve a <strong>Modelado → Nueva medida</strong></li>
-                                                                <li>Pega el DAX (usa el botón "Copiar DAX" arriba)</li>
-                                                                <li>Guarda y publica el reporte</li>
-                                                            </ol>
-                                                            <p className="mt-1">En el panel de Datos (derecha del lienzo), busca el ícono de calculadora 🔢 junto a tu tabla. Ahí verás la medida recién creada.</p>
+                                                            <p className="font-medium text-[var(--color-text-secondary)]">Dónde encontrar la medida:</p>
+                                                            <p>En el panel de Datos (derecha del lienzo), busca el ícono de calculadora 🔢 junto a tu tabla. Ahí verás las medidas disponibles.</p>
+                                                            <p>Si no aparece, puede que la medida no exista aún en el modelo. Créala en Power BI Desktop: <strong>Modelado → Nueva medida</strong> → pega el DAX → Guarda y publica.</p>
                                                         </div>
-                                                    )}
-
-                                                    {/* ── Success collapsed ── */}
-                                                    {ma.status === "success" && (
-                                                        <p className="text-xs text-green-400">Completado — la medida ya está en la tarjeta.</p>
                                                     )}
                                                 </div>
                                             );
