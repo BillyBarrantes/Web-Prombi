@@ -140,13 +140,13 @@ async function fetchEmbedConfig(): Promise<any> {
  * On 2nd+ consecutive reload, skips Step A and goes directly to re-embed.
  */
 let _reloadCount = 0;
-export async function refreshPowerBiEmbed(): Promise<{ ok: boolean; method: string }> {
+export async function refreshPowerBiEmbed(forceReEmbed: boolean = false): Promise<{ ok: boolean; method: string }> {
     const debug = shouldDebugPbi();
     _reloadCount++;
 
-    // Step A: Try report.reload() (only on first attempt)
+    // Step A: Try report.reload() (only on first attempt, unless forced to skip)
     const report = getActivePowerBiReport();
-    if (_reloadCount <= 1 && report && typeof report.reload === "function") {
+    if (!forceReEmbed && _reloadCount <= 1 && report && typeof report.reload === "function") {
         try {
             if (debug) console.log(`🔄 embedReload start: report.reload() (attempt #${_reloadCount})`);
             await report.reload();

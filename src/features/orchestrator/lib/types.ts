@@ -81,6 +81,7 @@ export interface VisualAction {
         table: string;
         column: string;
         dax_suggestion: string;
+        format_hint?: string;
     };
 }
 
@@ -120,6 +121,7 @@ export interface MeasureAssistantChatBubble {
     column?: string;
     probe_status?: ProbeStatus;
     placeholder_spec?: PlaceholderSpec;
+    format_hint?: string;
 }
 
 export interface ChatMessage {
@@ -241,4 +243,5 @@ export interface MeasureAssistantOpenDetail {
     probe_status?: ProbeStatus;
     retry_action?: VisualAction;
     placeholder_spec?: PlaceholderSpec;
+    format_hint?: string;
 }

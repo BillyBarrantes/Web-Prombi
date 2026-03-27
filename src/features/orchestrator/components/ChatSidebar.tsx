@@ -148,46 +148,88 @@ export default function ChatSidebar({
         }
     }, []);
 
-    // ── Refresh embedded PBI report (reload → re-embed, NOT report.refresh) ──
+    // ── Refresh embedded PBI report (Single-Click Deterministic Fetch-And-Probe) ──
     const handleRefreshPBI = useCallback(async (targetVisualName: string) => {
         console.log(`🔄 Actualizar Power BI clicked visual=${targetVisualName}`);
         setRefreshingVisual(targetVisualName);
         setManualVerifyMsg(prev => { const n = { ...prev }; delete n[targetVisualName]; return n; });
+        
         // Reset guards on visual refresh
         successEmitted.current.forEach(k => { if (k.startsWith(targetVisualName + '_')) successEmitted.current.delete(k); });
+        
         const msgId = `measure-assistant-${targetVisualName}`;
-        try {
-            const result = await refreshPowerBiEmbed();
-            console.log(`🔄 refreshPowerBiEmbed result: ok=${result.ok} method=${result.method}`);
+        const bubbleMsg = messages.find(m => m.id === msgId);
+        const measureName = bubbleMsg?.measure_assistant?.measure_name || "";
+        const tableName = bubbleMsg?.measure_assistant?.table || "";
+        const spec = bubbleMsg?.measure_assistant?.placeholder_spec;
 
-            // Replay placeholder card after reload
-            let replayMsg = "";
-            const bubbleMsg = messages.find(m => m.id === msgId);
-            const spec = bubbleMsg?.measure_assistant?.placeholder_spec;
-            if (spec && result.ok) {
-                const replay = await replayPlaceholderCard(spec);
-                if (replay.ok) {
-                    replayMsg = " La tarjeta vacía fue recreada automáticamente.";
-                    // Update visual name in bubble if changed
-                    if (replay.newVisualName && replay.newVisualName !== targetVisualName) {
-                        setMessages(prev => prev.map(m => {
-                            if (m.id !== msgId || !m.measure_assistant) return m;
-                            return {
-                                ...m,
-                                id: `measure-assistant-${replay.newVisualName}`,
-                                measure_assistant: { ...m.measure_assistant, target_visual_name: replay.newVisualName! },
-                            };
-                        }));
+        // Helper to probe visually
+        const probeCurrentVisual = async (vName: string): Promise<any> => {
+            const report = getActivePowerBiReport();
+            if (report && typeof (report as any).getActivePage === "function") {
+                try {
+                    const page = await (report as any).getActivePage();
+                    const visuals = page ? await page.getVisuals() : [];
+                    const v = Array.isArray(visuals) ? visuals.find((x: any) => String(x?.name || "") === vName) : null;
+                    if (v) {
+                        return await probeMeasureExists(v, tableName, measureName);
                     }
-                } else {
-                    replayMsg = " No pude recrear la tarjeta automáticamente; puede que necesites crearla de nuevo desde el chat.";
+                } catch { /* best-effort */ }
+            }
+            return { status: "INCONCLUSIVE" };
+        };
+
+        // Helper to replay placeholder
+        const attemptReplay = async (currentVName: string) => {
+            let nextVName = currentVName;
+            if (spec) {
+                const replay = await replayPlaceholderCard(spec);
+                if (replay.ok && replay.newVisualName && replay.newVisualName !== currentVName) {
+                    nextVName = replay.newVisualName;
+                    setMessages(prev => prev.map(m => {
+                        if (m.id !== msgId || !m.measure_assistant) return m;
+                        return {
+                            ...m,
+                            id: `measure-assistant-${nextVName}`,
+                            measure_assistant: { ...m.measure_assistant, target_visual_name: nextVName },
+                        };
+                    }));
                 }
             }
+            return { nextVName };
+        };
 
-            if (result.ok) {
-                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: `Reporte recargado (${result.method}).${replayMsg} Asegúrate de haber publicado al mismo Workspace que usas en PromtBI.` }));
+        try {
+            // Step 1: Soft Reload
+            let currentVisualName = targetVisualName;
+            const result1 = await refreshPowerBiEmbed(false);
+            if (result1.ok) {
+                const { nextVName } = await attemptReplay(currentVisualName);
+                currentVisualName = nextVName;
+                
+                const probe1 = await probeCurrentVisual(currentVisualName);
+                if (probe1.status === "FOUND") {
+                    setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "✅ Reporte actualizado. La medida ya debería aparecer en el panel Datos." }));
+                    setRefreshingVisual(null);
+                    return;
+                }
+            }
+            
+            // Step 2: Full Re-Embed Fallback (deterministic)
+            console.log(`Fallback a re-embed completo para la medida '${measureName}'...`);
+            const result2 = await refreshPowerBiEmbed(true);
+            if (result2.ok) {
+                const { nextVName } = await attemptReplay(currentVisualName);
+                currentVisualName = nextVName;
+                
+                const probe2 = await probeCurrentVisual(currentVisualName);
+                if (probe2.status === "FOUND") {
+                    setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "✅ Reporte actualizado. La medida ya debería aparecer en el panel Datos." }));
+                } else {
+                    setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "Aún no aparece: confirma que publicaste al MISMO workspace/dataset y que estás en modo edición" }));
+                }
             } else {
-                setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "No pude recargar el reporte. Intenta cerrar y abrir la página como último recurso." }));
+                 setManualVerifyMsg(prev => ({ ...prev, [targetVisualName]: "No pude recargar el reporte. Intenta cerrar y abrir la página como último recurso." }));
             }
         } catch (err) {
             console.warn(`🔄 Refresh error:`, err);
@@ -858,6 +900,11 @@ export default function ChatSidebar({
                                                             {fullDaxCopy && (
                                                                 <pre className="whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] text-[var(--color-text-primary)] mb-2">{fullDaxCopy}</pre>
                                                             )}
+                                                            {ma.format_hint === "percentage" && (
+                                                                <p className="text-xs font-semibold text-blue-400 mb-2">
+                                                                ⚡️ Después de crear la medida: ve a Modelado → Formato → Porcentaje en Desktop.
+                                                                </p>
+                                                            )}
                                                             <p className="text-[10px] text-[var(--color-text-muted)] mb-2">
                                                                 ℹ️ En Power BI Web normalmente no puedes crear medidas si no tienes permisos para editar el dataset. Si estás solo en Web, abre el reporte en Desktop o pide permisos.
                                                             </p>
@@ -881,6 +928,11 @@ export default function ChatSidebar({
                                                     {/* ── DAX block (MEASURE_EXISTS / WAITING_FOR_DRAG / INCONCLUSIVE / TROUBLESHOOT) ── */}
                                                     {ma.dax && st !== "MEASURE_MISSING" && st !== "SUCCESS" && (
                                                         <pre className="whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] text-[var(--color-text-primary)] mb-2">{fullDaxCopy}</pre>
+                                                    )}
+                                                    {ma.format_hint === "percentage" && st !== "SUCCESS" && st !== "MEASURE_MISSING" && (
+                                                        <p className="text-xs font-semibold text-blue-400 mb-2">
+                                                          ⚡️ Después de crear la medida: ve a Modelado → Formato → Porcentaje en Desktop.
+                                                        </p>
                                                     )}
 
                                                     {/* ── Botones ── */}

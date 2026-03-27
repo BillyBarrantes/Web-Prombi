@@ -2262,7 +2262,8 @@ async function handleCreateVisual(
                 target_visual_name: String(targetVisual?.name || "").trim(),
                 reason_code: req.operation, // e.g., "DISTINCTCOUNT_IN_CARD_BLOCKED"
                 probe_status: probeResult.status,
-                placeholder_spec: placeholderSpec
+                placeholder_spec: placeholderSpec,
+                format_hint: req.format_hint
             });
 
             return {
