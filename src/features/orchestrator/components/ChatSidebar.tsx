@@ -793,6 +793,30 @@ export default function ChatSidebar({
                                             {msg.content}
                                         </p>
 
+                                        {/* Custom Date Table Requirement Error UI */}
+                                        {msg.action?.operation === "ERROR" && msg.action?.error_code === "TIME_INTELLIGENCE_REQUIRES_DATE_TABLE" && (
+                                            <div className="mt-3 p-3 rounded-xl border border-[var(--color-error)] bg-[var(--color-error)]/10">
+                                                <p className="text-xs font-semibold text-[var(--color-error)] mb-2">⚠️ Falta tabla de fecha en el modelo</p>
+                                                <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+                                                    Para realizar cálculos de inteligencia de tiempo (como YoY o Acumulados), el backend requiere detectar una columna de tipo fecha en tu modelo, pero el esquema actual no la tiene.
+                                                </p>
+                                                <div className="flex flex-wrap gap-2">
+                                                    <button
+                                                        onClick={() => handleFollowUp("Sincronizar esquema")}
+                                                        className="text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white hover:opacity-90 cursor-pointer transition-opacity"
+                                                    >
+                                                        Sincronizar esquema
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleFollowUp("Subir archivo pbit")}
+                                                        className="text-[11px] font-semibold px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] cursor-pointer transition-colors"
+                                                    >
+                                                        Subir .pbit
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {msg.measure_assistant && (() => {
                                             const ma = msg.measure_assistant;
                                             const visualKey = ma.target_visual_name || "";
