@@ -810,8 +810,8 @@ export default function ChatSidebar({
                                                             ? "border-blue-500/20 bg-blue-900/5"
                                                             : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]";
 
-                                            // Build copyable DAX string: "MeasureName = Expression"
-                                            const fullDaxCopy = ma.measure_name && ma.dax
+                                            // Build copyable DAX string: "MeasureName = Expression", avoiding duplicates if backend sent it pre-formatted
+                                            const fullDaxCopy = (ma.measure_name && ma.dax && !ma.dax.trim().startsWith(ma.measure_name))
                                                 ? `${ma.measure_name} = ${ma.dax}`
                                                 : ma.dax || "";
 
@@ -858,6 +858,16 @@ export default function ChatSidebar({
                                                                     No es posible incrustar el ranking directamente en la tarjeta sin una medida explícita.
                                                                 </p>
                                                             )}
+                                                            {ma.reason_code === "running_total" && (
+                                                                <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+                                                                    Para acumulados, Power BI Web requiere una medida en el modelo. Hemos creado la tarjeta vacía.
+                                                                </p>
+                                                            )}
+                                                            {ma.reason_code === "yoy" && (
+                                                                <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+                                                                    YoY requiere Time Intelligence y una columna de fecha en el modelo. Usa la fecha detectada: {ma.table}[{ma.column}].
+                                                                </p>
+                                                            )}
                                                             <p className="text-[10px] text-[var(--color-text-muted)] mb-2 animate-pulse">🔎 Detectando cambios automáticamente…</p>
                                                         </>
                                                     )}
@@ -888,7 +898,7 @@ export default function ChatSidebar({
                                                             <div className="text-xs text-[var(--color-text-secondary)] space-y-1 mb-2">
                                                                 <ol className="list-decimal list-inside space-y-1">
                                                                     <li>Abre <strong>Power BI Desktop</strong> (Windows).</li>
-                                                                    <li>En el panel <strong>Campos</strong> (derecha), selecciona la tabla <strong>"{ma.table || 'tu tabla'}"</strong>.</li>
+                                                                    <li>En el panel <strong>Campos</strong> (derecha), selecciona la tabla <strong>"{ma.table || 'tu tabla'}"</strong>{ma.reason_code === "yoy" && ma.column ? ` (usaremos la fecha ${ma.column})` : ""}.</li>
                                                                     <li>Arriba, ve a <strong>Modelado → Nueva medida</strong>.</li>
                                                                     <li>Haz clic en <strong>"📋 Copiar DAX"</strong> aquí abajo y pégalo en la barra de fórmula.</li>
                                                                     <li>Presiona <strong>Enter</strong> para guardar la medida.</li>
