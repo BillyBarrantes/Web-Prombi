@@ -126,7 +126,7 @@ export interface MeasureAssistantChatBubble {
 
 export interface ChatMessage {
     id: string;
-    role: "user" | "assistant";
+    role: "user" | "assistant" | "system";
     content: string;
     timestamp: Date;
     action?: VisualAction;
@@ -136,6 +136,7 @@ export interface ChatMessage {
     isError?: boolean;
     failedMessage?: string;
     measure_assistant?: MeasureAssistantChatBubble;
+    playbooks?: Playbook[];
 }
 
 export interface Conversation {
@@ -244,4 +245,20 @@ export interface MeasureAssistantOpenDetail {
     retry_action?: VisualAction;
     placeholder_spec?: PlaceholderSpec;
     format_hint?: string;
+}
+
+// ── Persistence & Playbooks ─────────────────────────────────
+
+export interface RuntimeState {
+    blocked_capabilities: Record<string, boolean>;
+    suggested_measures_shown: string[];
+    user_acknowledged: Record<string, boolean>;
+    persistence_enabled: boolean;
+}
+
+export interface Playbook {
+    id: string;
+    title: string;
+    description: string;
+    action: VisualAction;
 }

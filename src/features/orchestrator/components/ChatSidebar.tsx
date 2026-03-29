@@ -12,12 +12,13 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { sendChatMessage, ApiTimeoutError, ApiRateLimitError, ApiConnectionError, ApiServerError } from "../lib/api";
+import { sendChatMessage, getPlaybooks, ApiTimeoutError, ApiRateLimitError, ApiConnectionError, ApiServerError } from "../lib/api";
 import { getCanvasVisualContext, getActivePowerBiReport, refreshPowerBiEmbed } from "../lib/pbiRuntime";
-import type { ChatMessage, ChatResponse, MeasureAssistantOpenDetail, MeasureAssistantStatus, ProbeStatus, PlaceholderSpec } from "../lib/types";
+import type { ChatMessage, ChatResponse, Playbook, MeasureAssistantOpenDetail, MeasureAssistantStatus, ProbeStatus, PlaceholderSpec } from "../lib/types";
 import type { ActionResult } from "../lib/actionHandler";
 import { probeMeasureExists, replayPlaceholderCard } from "../lib/actionHandler";
 import ActionCard from "./ActionCard";
+import { runtimeStateStore } from "../lib/runtimeStateStore";
 
 interface ChatSidebarProps {
     reportId: string;
@@ -58,6 +59,13 @@ export default function ChatSidebar({
     const loadingTimerRef = useRef<NodeJS.Timeout | null>(null);
     const [expandedHelp, setExpandedHelp] = useState<Record<string, boolean>>({});
     const [refreshingVisual, setRefreshingVisual] = useState<string | null>(null);
+
+    // Boot RuntimeState for capability persistence mapping
+    useEffect(() => {
+        if (tenantId && reportId) {
+            runtimeStateStore.load(tenantId, reportId);
+        }
+    }, [tenantId, reportId]);
 
     // Auto-scroll al último mensaje
     const scrollToBottom = useCallback(() => {
@@ -572,9 +580,65 @@ export default function ChatSidebar({
         }, 1200);
     };
 
+    const handleShowPlaybooks = async () => {
+        const userMsg: ChatMessage = {
+            id: `user-${Date.now()}`,
+            role: "user",
+            content: "Muéstrame recomendaciones de gráficos",
+            timestamp: new Date(),
+        };
+        const loadingMsg: ChatMessage = {
+            id: `loading-${Date.now()}`,
+            role: "assistant",
+            content: "",
+            timestamp: new Date(),
+            isLoading: true,
+        };
+        setMessages(prev => [...prev, userMsg, loadingMsg]);
+        setIsLoading(true);
+        startLoadingSteps();
+
+        try {
+            const { playbooks } = await getPlaybooks(tenantId, reportId);
+            setMessages(prev => [
+                ...prev.filter(m => !m.isLoading),
+                {
+                    id: `assistant-${Date.now()}`,
+                    role: "assistant",
+                    content: "Aquí tienes algunas recomendaciones basadas en tus datos:",
+                    timestamp: new Date(),
+                    playbooks,
+                }
+            ]);
+        } catch (error) {
+            setMessages(prev => [
+                ...prev.filter(m => !m.isLoading),
+                {
+                    id: `error-${Date.now()}`,
+                    role: "assistant",
+                    content: "❌ Lo siento, hubo un error al obtener recomendaciones.",
+                    timestamp: new Date(),
+                    isError: true,
+                }
+            ]);
+        } finally {
+            setIsLoading(false);
+            setLoadingStep(0);
+            if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
+        }
+    };
+
     const handleSubmit = async (messageText?: string) => {
         const text = messageText || input.trim();
         if (!text || isLoading) return;
+
+        const normalized = text.toLowerCase();
+        if (normalized.includes("qué gráficos puedo crear") || normalized.includes("recomendaciones")) {
+            handleShowPlaybooks();
+            setInput("");
+            if (inputRef.current) inputRef.current.style.height = "auto";
+            return;
+        }
 
         // Agregar mensaje del usuario
         const userMsg: ChatMessage = {
@@ -1061,6 +1125,43 @@ export default function ChatSidebar({
                                         {/* Action Card */}
                                         {msg.action && msg.action.operation !== "ERROR" && (
                                             <ActionCard action={msg.action} intent={msg.intent || ""} />
+                                        )}
+
+                                        {/* Playbooks Recomendaciones */}
+                                        {msg.playbooks && msg.playbooks.length > 0 && (
+                                            <div className="mt-4 flex flex-col gap-3">
+                                                {msg.playbooks.map(pb => (
+                                                    <div key={pb.id} className="p-4 rounded-[14px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] relative overflow-hidden group hover:border-[var(--color-accent)] transition-colors">
+                                                        <p className="text-sm font-semibold text-[var(--color-text-primary)] mb-1.5">{pb.title}</p>
+                                                        <p className="text-[11px] text-[var(--color-text-secondary)] mb-4">{pb.description}</p>
+                                                        <button
+                                                            onClick={() => {
+                                                                const fakeResponse: ChatResponse = {
+                                                                    status: "success",
+                                                                    action: pb.action,
+                                                                    intent: "playbook_execution",
+                                                                    confidence: 1.0,
+                                                                    retries_used: 0
+                                                                };
+                                                                setMessages(prev => [
+                                                                    ...prev, 
+                                                                    { id: `user-pb-${Date.now()}`, role: "user", content: `Quiero crear: ${pb.title}`, timestamp: new Date() },
+                                                                    { id: `ast-pb-${Date.now()}`, role: "assistant", content: `Generando: ${pb.title}`, timestamp: new Date(), action: pb.action }
+                                                                ]);
+                                                                if (onActionGenerated) {
+                                                                    const actionResult = onActionGenerated(fakeResponse);
+                                                                    if (actionResult && (actionResult as Promise<any>).catch) {
+                                                                        (actionResult as Promise<any>).catch(console.error);
+                                                                    }
+                                                                }
+                                                            }}
+                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white hover:opacity-90 transition-opacity text-[11px] font-medium w-fit cursor-pointer shadow-sm"
+                                                        >
+                                                            <span className="text-sm">✨</span> Crear visual
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         )}
 
                                         {/* Clickable Follow-up Questions */}

@@ -8,7 +8,7 @@
  * 4. Timeout automático con AbortController (Phase 4).
  */
 
-import type { ChatRequest, ChatResponse, Conversation, MeasureTemplate, MeasureTemplateListResponse } from "./types";
+import type { ChatRequest, ChatResponse, Conversation, MeasureTemplate, MeasureTemplateListResponse, RuntimeState, Playbook } from "./types";
 import { supabase } from "../../../lib/supabase";
 
 // Producción (Vercel): usamos same-origin + rewrites (/api/* -> Cloud Run) para evitar CORS.
@@ -325,4 +325,34 @@ export async function uploadDataset(
     } finally {
         clearTimeout(timeoutId);
     }
+}
+
+// ── Persistence & Playbooks ─────────────────────────────────
+
+export async function getRuntimeState(tenant_id: string, report_id: string): Promise<RuntimeState> {
+    return apiFetch<RuntimeState>(`/api/v1/runtime-state?tenant_id=${tenant_id}&report_id=${report_id}`, {
+        method: "GET",
+    });
+}
+
+export async function patchRuntimeState(
+    tenant_id: string,
+    report_id: string,
+    payload: {
+        blocked_capabilities?: Record<string, boolean>;
+        suggested_measures_shown?: string[];
+        user_acknowledged?: Record<string, boolean>;
+        replace?: boolean;
+    }
+): Promise<RuntimeState> {
+    return apiFetch<RuntimeState>(`/api/v1/runtime-state`, {
+        method: "PATCH",
+        body: JSON.stringify({ tenant_id, report_id, ...payload })
+    });
+}
+
+export async function getPlaybooks(tenant_id: string, report_id: string): Promise<{ playbooks: Playbook[] }> {
+    return apiFetch<{ playbooks: Playbook[] }>(`/api/v1/playbooks?tenant_id=${tenant_id}&report_id=${report_id}`, {
+        method: "GET",
+    });
 }

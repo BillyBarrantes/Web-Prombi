@@ -2,9 +2,10 @@
  * Action Handler — Bridges AI-generated VisualAction JSON with Power BI JS SDK.
  */
 
-import type { ChatResponse, VisualAction, MeasureAssistantOpenDetail, ProbeResult, PlaceholderSpec } from "./types";
+import type { ChatResponse, VisualAction, MeasureAssistantOpenDetail, ProbeResult, PlaceholderSpec, ProbeStatus } from "./types";
 import type { models } from "powerbi-client";
 import { getActivePowerBiReport, resolveRealTableName, getDiscoveredTables, discoverModelTables } from "./pbiRuntime";
+import { runtimeStateStore } from "./runtimeStateStore";
 
 export interface ActionResult {
     success: boolean;
@@ -2249,8 +2250,24 @@ async function handleCreateVisual(
                 }
             } catch { /* best effort */ }
 
-            // Probe deterministically
-            const probeResult = await probeMeasureExists(targetVisual, req.table, req.suggested_measure_name);
+            const blockedKey = `kpi_${req.operation}_card_blocked`;
+
+            // Persist capability block
+            runtimeStateStore.patch({
+                blocked_capabilities: { [blockedKey]: true },
+                suggested_measures_shown: req.measure_template_id ? [req.measure_template_id] : [],
+                user_acknowledged: { measure_assistant: true }
+            });
+
+            // FASE 1.1: Guard Preventivo basado en Runtime State
+            let probeStatus: ProbeStatus = "INCONCLUSIVE";
+            if (runtimeStateStore.state.blocked_capabilities?.[blockedKey]) {
+                if (debugPbi) console.log(`🛡️ Guard Preventivo: Skipeando probeMeasureExists para ${blockedKey} porque ya fue marcado de solo lectura anteriormente.`);
+            } else {
+                // Probe deterministically
+                const probeResult = await probeMeasureExists(targetVisual, req.table, req.suggested_measure_name);
+                probeStatus = probeResult.status;
+            }
 
             // Open Wizard using data from the requirement
             emitMeasureAssistantOpen({
@@ -2261,7 +2278,7 @@ async function handleCreateVisual(
                 title: action.title || `Total de ${req.column} únicos`,
                 target_visual_name: String(targetVisual?.name || "").trim(),
                 reason_code: req.operation, // e.g., "DISTINCTCOUNT_IN_CARD_BLOCKED"
-                probe_status: probeResult.status,
+                probe_status: probeStatus,
                 placeholder_spec: placeholderSpec,
                 format_hint: req.format_hint
             });
