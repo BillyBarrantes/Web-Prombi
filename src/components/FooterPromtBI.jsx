@@ -86,7 +86,7 @@ const FooterPromtBI = () => {
             className="h-16 md:h-20 w-auto object-contain drop-shadow-lg" 
           />
           <p className="text-white text-sm md:text-base font-medium tracking-wide drop-shadow-sm">
-            © 2024 PromtBI | Official Member of Microsoft AI Cloud Partner Program | Tecnología respaldada por Tres Niveles.
+            © 2026 PromtBI | Official Member of Microsoft AI Cloud Partner Program | Tecnología respaldada por Tres Niveles.
           </p>
         </div>
       </div>
