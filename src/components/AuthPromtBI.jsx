@@ -89,8 +89,17 @@ const AuthPromtBI = () => {
             <span className="text-2xl font-black tracking-tight text-white">PromtBI</span>
           </div>
 
-          <h2 className="text-3xl font-bold mb-2">{isLogin ? 'Bienvenido de vuelta' : 'Crea tu espacio de trabajo'}</h2>
-          <p className="text-gray-400 mb-8">{isLogin ? 'Ingresa a tu panel de control de PromtBI.' : 'Comienza tu prueba gratuita de 15 días.'}</p>
+          <div className="flex flex-col mb-8">
+            <div className="flex items-center gap-3 sm:gap-4 mb-2">
+              <h2 className="text-3xl font-bold">{isLogin ? 'Bienvenido de vuelta' : 'Crea tu espacio de trabajo'}</h2>
+              <img 
+                src="/Socio Microsoft.svg" 
+                alt="Microsoft Partner" 
+                className="h-7 sm:h-8 w-auto object-contain drop-shadow-md" 
+              />
+            </div>
+            <p className="text-gray-400">{isLogin ? 'Ingresa a tu panel de control de PromtBI.' : 'Comienza tu prueba gratuita de 15 días.'}</p>
+          </div>
 
           {/* Botón SSO Microsoft (Estratégico para Power BI) */}
           <button 
@@ -128,7 +137,7 @@ const AuthPromtBI = () => {
               </div>
             )}
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">Correo electrónico</label>
+              <label className="block text-xs font-medium text-gray-400 mb-1">Correo Corporativo</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500"><Mail size={18} /></div>
                 <input 
@@ -161,6 +170,13 @@ const AuthPromtBI = () => {
               className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] flex items-center justify-center gap-2 mt-4">
               {isLogin ? 'Ingresar a PromtBI' : 'Crear cuenta'} <ArrowRight size={18} />
             </button>
+
+            <div className="mt-6 flex items-center justify-center gap-2 text-xs text-gray-500 font-medium tracking-wide">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              Cifrado de extremo a extremo por Microsoft Azure
+            </div>
           </form>
 
           <div className="mt-8 text-center text-sm text-gray-400">

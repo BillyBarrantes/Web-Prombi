@@ -18,7 +18,7 @@ const PricingPromtBI = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto items-center">
           <div className="bg-[#0f0f0f] border border-white/10 rounded-2xl p-8 hover:bg-white/[0.02] transition-colors">
             <h3 className="text-xl font-semibold text-gray-300 mb-2">Plan Piloto</h3>
-            <p className="text-gray-500 text-sm mb-6">Para validar la magia de PromtBI.</p>
+            <p className="text-gray-500 text-sm mb-6">Ideal para probar la magia del lenguaje natural.</p>
             <div className="mb-8">
               <span className="text-4xl font-bold">S/ 0</span>
             </div>
@@ -38,13 +38,13 @@ const PricingPromtBI = () => {
               Más Elegido
             </div>
             <h3 className="text-2xl font-bold text-white mb-2">Plan Profesional</h3>
-            <p className="text-gray-400 text-sm mb-6">Para dueños que toman el control.</p>
+            <p className="text-gray-400 text-sm mb-6">Para gerentes y analistas que toman decisiones diarias.</p>
             <div className="mb-8">
               <span className="text-5xl font-bold">S/ 69</span>
               <span className="text-gray-400 text-lg">/mes</span>
             </div>
             <ul className="space-y-4 mb-8 text-gray-300 text-sm font-medium">
-              <li className="flex items-center gap-3"><span className="text-blue-400">✓</span> Conexiones ilimitadas</li>
+              <li className="flex items-center gap-3"><span className="text-blue-400">✓</span> Conexión directa con SQL/ERP</li>
               <li className="flex items-center gap-3"><span className="text-blue-400">✓</span> Consultas ilimitadas</li>
               <li className="flex items-center gap-3"><span className="text-blue-400">✓</span> Generación de Dashboards visuales</li>
               <li className="flex items-center gap-3"><span className="text-blue-400">✓</span> Análisis de notas de voz</li>
@@ -58,15 +58,15 @@ const PricingPromtBI = () => {
           <div className="bg-[#0f0f0f] border border-amber-500/30 rounded-2xl p-8 relative overflow-hidden group hover:border-amber-500/60 transition-colors">
             <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 blur-[50px] group-hover:bg-amber-500/20 transition-all"></div>
             <h3 className="text-xl font-bold text-amber-500 mb-2">Plan Business</h3>
-            <p className="text-gray-500 text-sm mb-6">Para empresas que escalan con datos.</p>
+            <p className="text-gray-500 text-sm mb-6">Para organizaciones que exigen control y gobernanza.</p>
             <div className="mb-8">
               <span className="text-4xl font-bold">S/ 289</span>
               <span className="text-gray-500">/mes</span>
             </div>
             <ul className="space-y-4 mb-8 text-gray-400 text-sm">
               <li className="flex items-center gap-3"><span className="text-amber-500">✓</span> Todo lo del Plan Profesional</li>
-              <li className="flex items-center gap-3"><span className="text-amber-500">✓</span> Modelos de IA personalizados</li>
-              <li className="flex items-center gap-3"><span className="text-amber-500">✓</span> Cruce de inventarios multi-sucursal</li>
+              <li className="flex items-center gap-3"><span className="text-amber-500">✓</span> Seguridad de Grado Microsoft Azure</li>
+              <li className="flex items-center gap-3"><span className="text-amber-500">✓</span> Soporte Técnico Dedicado</li>
               <li className="flex items-center gap-3"><span className="text-amber-500">✓</span> API Access para integraciones</li>
               <li className="flex items-center gap-3"><span className="text-amber-500">✓</span> Account Manager dedicado 24/7</li>
             </ul>

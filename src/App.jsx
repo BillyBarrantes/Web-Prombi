@@ -5,6 +5,7 @@ import HeroPromtBI from './components/HeroPromtBI'
 import HowItWorksPromtBI from './components/HowItWorksPromtBI'
 import FeaturesBentoPromtBI from './components/FeaturesBentoPromtBI'
 import PricingPromtBI from './components/PricingPromtBI'
+import TrustSectionPromtBI from './components/TrustSectionPromtBI'
 import FAQPromtBI from './components/FAQPromtBI'
 import FooterPromtBI from './components/FooterPromtBI'
 import AuthPromtBI from './components/AuthPromtBI'
@@ -17,6 +18,7 @@ const LandingPageComponents = () => (
     <HeroPromtBI />
     <HowItWorksPromtBI />
     <FeaturesBentoPromtBI />
+    <TrustSectionPromtBI />
     <PricingPromtBI />
     <FAQPromtBI />
     <FooterPromtBI />

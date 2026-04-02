@@ -14,7 +14,7 @@ const HowItWorksPromtBI = () => {
             Del reporte estático <br/> a la magia visual en minutos.
           </h3>
           <p className="text-gray-400 text-lg">
-            No toques tu infraestructura. Solo comparte tu reporte estándar y nosotros corremos todo en nuestro entorno serverless de alta disponibilidad.
+            No toques tu infraestructura. Solo comparte tu reporte estándar y nosotros operamos todo de manera transparente en nuestra Infraestructura Cloud de alta disponibilidad.
           </p>
         </div>
 
@@ -27,9 +27,9 @@ const HowItWorksPromtBI = () => {
               <div className="w-16 h-16 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mb-6 mx-auto md:mx-0 group-hover:bg-blue-500/20 transition-colors">
                 <span className="text-2xl">🔗</span>
               </div>
-              <h4 className="text-xl font-bold text-white mb-3">Conecta tu reporte PBI.</h4>
+              <h4 className="text-xl font-bold text-white mb-3">Conexión Segura.</h4>
               <p className="text-gray-400 text-sm leading-relaxed">
-                Comparte tu reporte estándar de Power BI. Nuestro backend en FastAPI y Supabase se encarga de la integración segura en segundos.
+                Sincronización directa con tu entorno de datos. Nuestra arquitectura, alojada íntegramente en nodos de Microsoft Azure, garantiza una integración encriptada y de alta disponibilidad en segundos.
               </p>
             </div>
 
@@ -51,7 +51,7 @@ const HowItWorksPromtBI = () => {
               </div>
               <h4 className="text-xl font-bold text-white mb-3">Visualiza al instante.</h4>
               <p className="text-gray-400 text-sm leading-relaxed">
-                La IA interpreta, dibuja el gráfico y acomoda el layout en tu pantalla. Decisiones ejecutivas basadas en datos, sin esperas.
+                La IA interpreta, dibuja el gráfico y acomoda el layout en tu pantalla. Decisiones ejecutivas basadas en datos, sin esperas. Todo operando bajo el estricto cumplimiento y la gobernanza de datos de tu organización.
               </p>
             </div>
           </div>

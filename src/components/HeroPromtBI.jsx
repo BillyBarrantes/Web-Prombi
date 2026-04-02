@@ -9,20 +9,22 @@ const HeroPromtBI = () => {
 
       <div className="container mx-auto px-6 relative z-10 text-center">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-white/5 mb-8 animate-fade-in">
-          <span className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6]"></span>
-          <span className="text-sm font-medium text-gray-400">Impulsado por Gemini + LangGraph</span>
+          <svg className="w-4 h-4 mr-2 text-blue-400 fill-current" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M11.4 24H0V12.6h11.4V24zM24 24H12.6V12.6H24V24zM11.4 11.4H0V0h11.4v11.4zM24 11.4H12.6V0H24v11.4z"/>
+          </svg>
+          <span className="text-blue-400 font-medium text-sm">Official Member of Microsoft AI Cloud Partner Program</span>
         </div>
 
         <h1 className="text-5xl lg:text-7xl font-bold tracking-tight mb-6 bg-gradient-to-b from-white to-gray-500 bg-clip-text text-transparent">
           Tu reporte de Power BI <br /> 
-          <span className="text-blue-500">ahora habla tu idioma</span>
+          <span className="text-blue-500">IA Conversacional con Seguridad de Grado Azure</span>
         </h1>
 
         <p className="max-w-2xl mx-auto text-lg lg:text-xl text-gray-400 mb-10 leading-relaxed">
-          Olvida el cuello de botella del DAX. Escribe lo que necesitas y nuestro orquestador dibuja gráficos, filtra fechas y acomoda tu dashboard en 5 segundos. **Tu analista de datos virtual en tiempo real.**
+          Elimina el cuello de botella del DAX. Conecta tus datos y genera dashboards mediante lenguaje natural sobre infraestructura certificada por Microsoft. Tu analista virtual en tiempo real.
         </p>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-4">
           <Link
             to={`/login${search}`}
             className="px-8 py-4 bg-white text-black font-bold rounded-xl hover:bg-blue-500 hover:text-white transition-all duration-300 transform hover:scale-105 shadow-[0_0_20px_rgba(255,255,255,0.1)] text-center"
@@ -32,6 +34,15 @@ const HeroPromtBI = () => {
           <button className="px-8 py-4 bg-transparent text-white font-semibold border border-white/10 rounded-xl hover:bg-white/5 transition-all">
             Ver Demo Interactiva
           </button>
+        </div>
+
+        <div className="mt-20 mb-16 flex flex-col items-center justify-center gap-4">
+          <p className="text-[10px] tracking-[0.2em] text-gray-500 uppercase font-semibold">Infraestructura de grado empresarial impulsada por:</p>
+          <div className="flex flex-wrap justify-center items-center gap-12 opacity-60 grayscale hover:grayscale-0 transition-all duration-500">
+            <img src="/azure-icon-1.svg" alt="Microsoft Azure" className="h-7 w-auto" />
+            <img src="/power-bi-2.svg" alt="Power BI" className="h-7 w-auto" />
+            <img src="/microsoft-icon-1.svg" alt="Microsoft 365" className="h-7 w-auto" />
+          </div>
         </div>
 
         <div className="relative max-w-4xl mx-auto mt-12 group">

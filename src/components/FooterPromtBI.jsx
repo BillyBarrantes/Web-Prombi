@@ -36,7 +36,7 @@ const FooterPromtBI = () => {
 
   // Configuración de WhatsApp
   const waNumber = "51907948972";
-  const waMessage = encodeURIComponent("Hola equipo de PromtBI, me interesa implementar esta herramienta y me gustaría tener mayor informacion");
+  const waMessage = encodeURIComponent("Hola, me gustaría solicitar una demo B2B de PromtBI y conocer cómo funciona su infraestructura sobre Azure.");
   const waLink = `https://wa.me/${waNumber}?text=${waMessage}`;
 
   return (
@@ -45,7 +45,10 @@ const FooterPromtBI = () => {
         
         {/* Call to Action Final */}
         <div className="bg-gradient-to-r from-[#0f0f0f] to-[#1a1f2e] border border-blue-500/20 rounded-3xl p-10 md:p-16 text-center max-w-5xl mx-auto mb-16 shadow-[0_0_50px_rgba(59,130,246,0.05)]">
-          <h2 className="text-3xl md:text-5xl font-bold mb-6">Habla con tu Power BI hoy mismo.</h2>
+          <h2 className="text-3xl md:text-5xl font-bold mb-6 flex items-center justify-center">
+            <img src="/power-bi-2.svg" alt="Power BI" className="h-10 md:h-12 w-auto inline-block mr-4 align-middle" />
+            Habla con tu Power BI hoy mismo.
+          </h2>
           <p className="text-gray-400 text-lg mb-8 max-w-2xl mx-auto">
             Únete a los gerentes que ya están interactuando con sus modelos de datos en segundos y ahorrando en licencias Premium. Empieza gratis, cancela cuando quieras.
           </p>
@@ -76,8 +79,15 @@ const FooterPromtBI = () => {
           </div>
         </div>
         
-        <div className="text-center text-xs text-gray-700 mt-8">
-          &copy; {new Date().getFullYear()} PromtBI AI. Todos los derechos reservados.
+        <div className="mt-16 flex flex-col items-center justify-center gap-6 text-center w-full pb-8">
+          <img 
+            src="/Socio Microsoft.svg" 
+            alt="Socio Oficial Microsoft" 
+            className="h-16 md:h-20 w-auto object-contain drop-shadow-lg" 
+          />
+          <p className="text-white text-sm md:text-base font-medium tracking-wide drop-shadow-sm">
+            © 2024 PromtBI | Official Member of Microsoft AI Cloud Partner Program | Tecnología respaldada por Tres Niveles.
+          </p>
         </div>
       </div>
 
